@@ -417,6 +417,19 @@ void ConsoleDeviceInitialize(const char* title, bool unused_a2, bool unused_a3) 
 
     bool desktopTried = false;
     CGxFormat format = s_requestedFormat;
+    if (getenv("MAPBAKER")) {
+        // MapBaker renders entirely offscreen and never presents to the back buffer.
+        // Force a small windowed device so it never switches the desktop display mode
+        // (which exclusive fullscreen would do) or shows a large fullscreen window.
+        // The wtf's gxWindow/gxResolution are ignored here (their CVars are registered
+        // after CVar::Initialize runs), so set the format directly.
+        s_requestedFormat.m_window = true;
+        s_desktopFormat.m_window = true;
+        format.m_window = true;
+        format.m_maximize = 0;
+        format.m_size.x = 256;
+        format.m_size.y = 256;
+    }
     ValidateFormatMonitor(format);
 
     for (s_device = CreateGxDevice(api, OsWindowProc, format); !s_device; s_device = CreateGxDevice(api, OsWindowProc, format)) {

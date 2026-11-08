@@ -3922,6 +3922,96 @@ void CGxDeviceD3d::DeviceReadPixels(CiRect& rect, TSGrowableArray<CImVector>& pi
     surface->Release();
 }
 
+// MapBaker: read back a region of a render-target texture. Render targets live in D3DPOOL_DEFAULT
+// with D3DUSAGE_RENDERTARGET, so LockRect cannot be used directly; bounce through a
+// D3DPOOL_SYSTEMMEM offscreen surface via GetRenderTargetData.
+void CGxDeviceD3d::DeviceReadRenderTarget(CGxTex* texture, CiRect& rect, TSGrowableArray<CImVector>& pixels) {
+    if (!this->m_context || !texture) {
+        pixels.SetCount(0);
+        return;
+    }
+
+    uint32_t width = rect.maxX - rect.minX;
+    uint32_t height = rect.maxY - rect.minY;
+
+    if (width == 0 || height == 0) {
+        pixels.SetCount(0);
+        return;
+    }
+
+    if (texture->m_needsCreation || (!texture->m_apiSpecificData && !texture->m_apiSpecificData2)) {
+        this->ITexCreate(texture);
+    }
+
+    if (texture->m_target == GxTex_CubeMap || !texture->m_apiSpecificData) {
+        pixels.SetCount(0);
+        return;
+    }
+
+    LPDIRECT3DSURFACE9 sourceSurface = nullptr;
+
+    if (FAILED(static_cast<IDirect3DTexture9*>(texture->m_apiSpecificData)->GetSurfaceLevel(0, &sourceSurface))) {
+        pixels.SetCount(0);
+        return;
+    }
+
+    D3DSURFACE_DESC sourceDesc;
+    sourceSurface->GetDesc(&sourceDesc);
+
+    if (rect.minX < 0 || rect.minY < 0 || rect.maxX > sourceDesc.Width || rect.maxY > sourceDesc.Height) {
+        sourceSurface->Release();
+        pixels.SetCount(0);
+        return;
+    }
+
+    LPDIRECT3DSURFACE9 readbackSurface = nullptr;
+
+    if (FAILED(this->m_d3dDevice->CreateOffscreenPlainSurface(width, height, sourceDesc.Format, D3DPOOL_SYSTEMMEM, &readbackSurface, nullptr)) ||
+        FAILED(this->m_d3dDevice->GetRenderTargetData(sourceSurface, readbackSurface))) {
+        if (readbackSurface) {
+            readbackSurface->Release();
+        }
+
+        sourceSurface->Release();
+        pixels.SetCount(0);
+        return;
+    }
+
+    pixels.SetCount(width * height);
+    D3DLOCKED_RECT lockedRect;
+
+    if (SUCCEEDED(readbackSurface->LockRect(&lockedRect, nullptr, D3DLOCK_READONLY))) {
+        const uint8_t* source = static_cast<const uint8_t*>(lockedRect.pBits);
+
+        switch (sourceDesc.Format) {
+            case D3DFMT_A8R8G8B8:
+            case D3DFMT_X8R8G8B8:
+            case D3DFMT_A8B8G8R8: {
+                CImVector* dest = pixels.Ptr();
+
+                for (uint32_t y = height; y; y--) {
+                    memcpy(dest, source, sizeof(CImVector) * width);
+                    source += lockedRect.Pitch;
+                    dest += width;
+                }
+
+                break;
+            }
+
+            default:
+                memset(pixels.Ptr(), 0xFF, sizeof(CImVector) * width * height);
+                break;
+        }
+
+        readbackSurface->UnlockRect();
+    } else {
+        memset(pixels.Ptr(), 0xFF, sizeof(CImVector) * width * height);
+    }
+
+    readbackSurface->Release();
+    sourceSurface->Release();
+}
+
 // VERIFY: dd2f1dd0 manual
 // OFFSET: 0x0069FAA0
 int32_t CGxDeviceD3d::ICheckDepthStencilFormat(D3DFORMAT format) {

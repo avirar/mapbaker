@@ -277,6 +277,13 @@ void CGxDevice::DeviceSetRenderTarget(EGxBuffer buffer, CGxTex* texture, uint32_
     }
 }
 
+// MapBaker: base fallback; the D3D9Ex driver implements the real readback.
+void CGxDevice::DeviceReadRenderTarget(CGxTex* texture, CiRect& rect, TSGrowableArray<CImVector>& pixels) {
+    (void)texture;
+    (void)rect;
+    pixels.SetCount(0);
+}
+
 // VERIFY: 48d0bcc7 auto
 // OFFSET: 0x006843B0
 void CGxDevice::NotifyOnDeviceRestored() {

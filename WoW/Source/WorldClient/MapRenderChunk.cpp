@@ -23,6 +23,7 @@
 #include "WoW/Source/WorldClient/MapLight.h"
 #include "WoW/Source/WorldClient/Types.h"
 #include "WoW/Source/WorldClient/World.h"
+#include "Tools/MapBaker/MapBakerXray.h"
 #if defined(_MSC_VER)
 #include <malloc.h>
 #else
@@ -1964,6 +1965,19 @@ void CMapRenderChunk::InitializeVertexShaderConstants(const C44Matrix& world, co
     SVertexShaderConstants& consts = CMapRenderChunk::s_vertexShaderConsts;
     consts.m_worldView = world * view;
     consts.m_viewTranspose = view.Transpose();
+
+    // MapBaker diagnostic (MAPBAKER_DEBUG_VIEW=1): the terrain's actual world transform
+    // source (const 0), captured at the exact moment the terrain pass is prepared.
+    if (getenv("MAPBAKER_DEBUG_VIEW")) {
+        fprintf(stderr,
+                "MapBaker dbg: vsc tag=%d worldT=(%.1f,%.1f,%.1f) viewT=(%.3f,%.3f,%.3f) "
+                "mvwT=(%.1f,%.1f,%.1f)\n",
+                MapBakerDebugTileTag,
+                world.d0, world.d1, world.d2,
+                view.d0, view.d1, view.d2,
+                consts.m_worldView.d0, consts.m_worldView.d1, consts.m_worldView.d2);
+        fflush(stderr);
+    }
 
     CGxDevice* device = g_theGxDevicePtr;
     consts.m_projection = device->m_projNative;

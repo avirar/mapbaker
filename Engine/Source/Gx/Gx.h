@@ -58,6 +58,7 @@ int32_t GxAdapterID(uint16_t& vendorID, uint16_t& deviceID, uint32_t& driverVers
 int32_t GxAdapterInfer(uint16_t& deviceID);
 int32_t GxAdapterMonitorModes(TSGrowableArray<CGxMonitorMode>& modes);
 void GxReadPixels(CiRect& rect, TSGrowableArray<CImVector>& pixels);
+void GxReadRenderTarget(CGxTex* texture, CiRect& rect, TSGrowableArray<CImVector>& pixels);
 int32_t GxVertexHasAttrib(EGxVertexBufferFormat format, EGxVertexAttrib attrib);
 void GxXformSet(EGxXform xf, const C44Matrix& matrix);
 char* GxBufLock(CGxBuf* buf);

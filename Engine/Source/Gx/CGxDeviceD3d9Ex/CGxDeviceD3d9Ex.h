@@ -269,6 +269,7 @@ class CGxDeviceD3d9Ex : public CGxDevice {
     virtual void DeviceSetGamma(const CGxGammaRamp& ramp);
     virtual void* DeviceWindow();
     virtual void DeviceReadPixels(CiRect& rect, TSGrowableArray<CImVector>& pixels);
+    virtual void DeviceReadRenderTarget(CGxTex* texture, CiRect& rect, TSGrowableArray<CImVector>& pixels);
     virtual void DeviceReadDepths(CiRect& rect, TSGrowableArray<float>& depths);
     virtual int32_t DeviceWM(EGxWM wm, uintptr_t param1, uintptr_t param2);
     virtual void DeviceSetRenderTarget(EGxBuffer buffer, CGxTex* texture, uint32_t plane);

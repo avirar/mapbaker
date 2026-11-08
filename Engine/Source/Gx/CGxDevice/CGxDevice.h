@@ -179,6 +179,7 @@ class CGxDevice {
     virtual void DeviceTakeScreenShot();
     virtual void DeviceReadScreenShot(uint32_t& width, uint32_t& height, const CImVector*& pixels);
     virtual void DeviceReadPixels(CiRect& rect, TSGrowableArray<CImVector>& pixels) = 0;
+    virtual void DeviceReadRenderTarget(CGxTex* texture, CiRect& rect, TSGrowableArray<CImVector>& pixels);
     virtual void DeviceReadDepths(CiRect& rect, TSGrowableArray<float>& depths) = 0;
     virtual int32_t DeviceWM(EGxWM wm, uintptr_t param1, uintptr_t param2) = 0;
     virtual void DeviceSetRenderTarget(EGxBuffer buffer, CGxTex* texture, uint32_t plane);

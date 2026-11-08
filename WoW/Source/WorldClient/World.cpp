@@ -1,5 +1,8 @@
 #include "World.h"
+#include <cstdio>
 #include <cstdlib>
+#include "Tools/MapBaker/MapBakerXray.h"
+#include "Tools/MapBaker/MapBakerQuad.h"
 #include <new>
 #include <algorithm>
 #include <cmath>
@@ -2813,6 +2816,11 @@ void CWorldScene::Update(C3Vector* camPos, C3Vector* camTarget) {
         dirXY.y *= invXY;
         dirXY.z *= invXY;
     } else {
+        // MapBaker: a perfectly vertical camera has no horizontal view direction; fall back to
+        // +X so camPlaneXY, the sort planes and the clip-buffer matrix stay well-formed.
+        // Non-degenerate cameras are unaffected.
+        dirXY.x = 1.0f;
+        dirXY.y = 0.0f;
         dirXY.z = 0.0f;
     }
 
@@ -2873,7 +2881,9 @@ void CWorldScene::Update(C3Vector* camPos, C3Vector* camTarget) {
     CWorldScene::camPlane.n = CWorldScene::camVec;
     CWorldScene::camPlane.d = -(camPos->x * CWorldScene::camVec.x + camPos->y * CWorldScene::camVec.y + CWorldScene::camVec.z * camPos->z);
 
-    if (lenSqXY > 0.000099999997f) {
+    // MapBaker: test the (possibly substituted) horizontal direction instead of lenSqXY so the
+    // clip-buffer matrix is also valid for a perfectly vertical camera.
+    if (dirXY.x * dirXY.x + dirXY.y * dirXY.y > 0.000099999997f) {
         C44Matrix lookAt;
         GxuXformCreateLookAtSgCompat(C3Vector(0.0f, 0.0f, 0.0f), dirXY, C3Vector(0.0f, 0.0f, 1.0f), lookAt);
         lookAt.Translate(-CWorldScene::s_activeWorldView);
@@ -2983,13 +2993,336 @@ void CWorldScene::LocateViewer3() {
     }
 }
 
-// VERIFY: a040cfec manual
+// --- MapBaker x-ray "city floor" helpers ---------------------------------------------
+// When MapBaker renders a top-down tile of a city (Stormwind/Orgrimmar/Undercity), the
+// normal depth test makes the roofs win and hide the floors. The original minimap shows
+// the city in x-ray (floors visible). These helpers let MapBaker pick how the gated WMO
+// groups are drawn: with depth disabled (depthoff / zsort) or Z-inverted (zinv).
+// See Tools/MapBaker/MapBakerXray.h for the knobs.
+
+// A WMO is gated when its center falls on a flagged ADT. Per-WMO (not per-tile) so the
+// same building renders identically in every tile it appears in.
+// Returns the gate ADT index (64*ty+tx) when gated, -2 when the scope is "all" (no
+// per-ADT index), or -1 when not gated.
+static int32_t MapBakerXrayGateIdx(const CMapObjDef* mapObjDef) {
+    if (MapBakerXrayScope == 0) {
+        return -2;
+    }
+
+    const float kAdtSize = 533.33331f;
+    const float kWorldOrigin = 17066.666f;
+    const float cx = (mapObjDef->m_bbox.b.x + mapObjDef->m_bbox.t.x) * 0.5f;
+    const float cy = (mapObjDef->m_bbox.b.y + mapObjDef->m_bbox.t.y) * 0.5f;
+    const int32_t tx = (int32_t)floorf((kWorldOrigin - cy) / kAdtSize);
+    const int32_t ty = (int32_t)floorf((kWorldOrigin - cx) / kAdtSize);
+
+    if (tx < 0 || ty < 0 || tx >= 64 || ty >= 64) {
+        return -1;
+    }
+
+    return MapBakerXrayGate[64 * ty + tx] != 0 ? (64 * ty + tx) : -1;
+}
+
+// Trick/portal "distance" models (e.g. Stormwind cathedral): a raised + inflated copy
+// of a building the client shows when the player is far away. Top-down it blankets the
+// city. Detect: bbox top far above the street AND bbox bottom also above the street
+// (a real building sits on the ground, so its bottom is at/below the street).
+static bool MapBakerXrayTrickSkip(const CMapObjDef* mapObjDef, int32_t gidx) {
+    if (MapBakerXraySkipAbove <= 0.0f || gidx < 0) {
+        return false;
+    }
+
+    const float street = MapBakerXrayStreetH[gidx];
+
+    if (street <= 0.0f) {
+        return false;
+    }
+
+    const float topAbove = mapObjDef->m_bbox.t.z - street;
+    const float bottomAbove = mapObjDef->m_bbox.b.z - street;
+
+    return topAbove > MapBakerXraySkipAbove && bottomAbove > 25.0f;
+}
+
+// Per-GROUP dump (for the "2D WMO quads" path): one row per (WMO, group), with the
+// minimap-classification flag bits so the web UI can tell exterior quads (0x8 set:
+// drawn on the outdoor minimap) from interior quads (0x8 clear: only shown once the
+// player is physically inside, recursed through portals) and from the interior/exterior
+// fog bit (0x8000). See CMapEntity::QueryInterior and CMapObj::QueryMapObjMinimapGroup.
+struct MapBakerXraySeenKey { const CMapObjDef* def; int32_t groupNum; };
+static MapBakerXraySeenKey s_mapBakerXraySeen[8192] = {};
+static uint32_t s_mapBakerXraySeenCount = 0;
+
+static void MapBakerXrayDumpWmo(CMapObjDefGroup* group, const CMapObjDef* mapObjDef, int32_t gidx) {
+    const int32_t groupNum = group ? (int32_t)group->m_groupNum : -1;
+    for (uint32_t i = 0; i < s_mapBakerXraySeenCount; i++) {
+        if (s_mapBakerXraySeen[i].def == mapObjDef && s_mapBakerXraySeen[i].groupNum == groupNum) {
+            return;
+        }
+    }
+
+    if (s_mapBakerXraySeenCount < 8192) {
+        s_mapBakerXraySeen[s_mapBakerXraySeenCount].def = mapObjDef;
+        s_mapBakerXraySeen[s_mapBakerXraySeenCount].groupNum = groupNum;
+        s_mapBakerXraySeenCount++;
+    }
+
+    const CMapObj* mapObj = mapObjDef->m_owner;
+    const float kAdtSize = 533.33331f;
+    const float kWorldOrigin = 17066.666f;
+    // Group-center ADT (per-group, not per-def): a WMO spans many ADTs and the quads
+    // are per-group, so the gate/street reference should be the group's own tile.
+    const float cx = (group->m_bbox.b.x + group->m_bbox.t.x) * 0.5f;
+    const float cy = (group->m_bbox.b.y + group->m_bbox.t.y) * 0.5f;
+    const int32_t atx = (int32_t)floorf((kWorldOrigin - cy) / kAdtSize);
+    const int32_t aty = (int32_t)floorf((kWorldOrigin - cx) / kAdtSize);
+    const bool gated = (gidx >= 0) || (gidx == -2);
+    const float street = (gidx >= 0) ? MapBakerXrayStreetH[gidx] : 0.0f;
+    // The authoritative minimap interior/exterior bits live on the SMO group's raw flags
+    // (CMapObjGroup::m_flags), NOT on the render-instance CMapObjDefGroup::m_flags (which
+    // is the runtime MapObjFlag set). Bridge via m_owner->GetGroup(groupNum). See
+    // CMapObj::QueryMapObjMinimapGroup (reads 0x8 exterior / 0x40 interior-class) and
+    // CMapEntity::QueryInterior (interior when 0x8 is clear).
+    const CMapObjGroup* smoGroup = (mapObjDef->m_owner && group)
+            ? mapObjDef->m_owner->GetGroup(groupNum, 0) : nullptr;
+    const uint32_t smoFlags = smoGroup ? (uint32_t)smoGroup->m_flags : 0;
+    const int32_t ext = (smoFlags & 0x8) ? 1 : 0;      // minimap exterior (outdoor) bit
+    const int32_t b40 = (smoFlags & 0x40) ? 1 : 0;      // interior-class bit (must match start group)
+    const int32_t intBit = (smoFlags >> 15) & 1;        // interior/exterior fog bit
+    const char* smoName = smoGroup ? smoGroup->m_groupName : nullptr;
+    const float grpTop = group ? (group->m_bbox.t.z - street) : 0.0f;
+    const float grpBot = group ? (group->m_bbox.b.z - street) : 0.0f;
+    FILE* out = MapBakerXrayDumpFile ? MapBakerXrayDumpFile : stderr;
+
+    fprintf(out,
+            "MapBakerXray: WMO '%s' grp=%d smo='%s' ext=%d b40=%d int=%d smoFlags=0x%x "
+            "xy=[%.0f..%.0f / %.0f..%.0f] grpZ=[%.0f..%.0f] defZ=[%.0f..%.0f] "
+            "adt(%d,%d) gate=%s%s street=%.0f grpTop=%+.0f grpBot=%+.0f\n",
+            mapObj ? mapObj->m_wmoName : "?",
+            groupNum,
+            smoName ? smoName : "-",
+            ext,
+            b40,
+            intBit,
+            smoFlags,
+            group ? group->m_bbox.b.x : 0.0f,
+            group ? group->m_bbox.t.x : 0.0f,
+            group ? group->m_bbox.b.y : 0.0f,
+            group ? group->m_bbox.t.y : 0.0f,
+            group ? group->m_bbox.b.z : 0.0f,
+            group ? group->m_bbox.t.z : 0.0f,
+            mapObjDef->m_bbox.b.z,
+            mapObjDef->m_bbox.t.z,
+            atx,
+            aty,
+            gated ? "on" : "off",
+            (gated && MapBakerXrayTrickSkip(mapObjDef, gidx)) ? " TRICK-SKIP" : "",
+            street,
+            grpTop,
+            grpBot);
+    // Flush so the serve's /dump.txt (and a crash) show per-group lines live, not just
+    // at fclose. This runs once per unique (WMO, group).
+    fflush(out);
+}
+
+// --- MapBaker 2D WMO quad collection ------------------------------------------------
+// Records a (def, group) into the global quad table (dedup by (def ptr, groupNum)) for
+// the "3D terrain + 2D WMO quads" overlay. Called from the render hook while a collection
+// pass runs (MapBakerQuadCollect). Stores the group's world bbox, the raw SMO flags
+// (interior/exterior classification), and the WMO/SMO group names. See MapBakerQuad.h.
+static void MapBakerQuadCollectGroup(CMapObjDefGroup* group, const CMapObjDef* mapObjDef) {
+    const int32_t groupNum = (int32_t)group->m_groupNum;
+    const void* defKey = (const void*)mapObjDef;
+    for (uint32_t i = 0; i < MapBakerQuadCount; i++) {
+        if (MapBakerQuadTable[i].m_def == defKey && MapBakerQuadTable[i].m_groupNum == groupNum) {
+            return;
+        }
+    }
+
+    if (MapBakerQuadCount >= MapBakerQuadCap) {
+        return;
+    }
+
+    MapBakerQuadEntry* e = &MapBakerQuadTable[MapBakerQuadCount];
+    e->m_def = defKey;
+    e->m_groupNum = groupNum;
+    const char* wmoName = (mapObjDef->m_owner) ? mapObjDef->m_owner->m_wmoName : nullptr;
+    snprintf(e->m_wmoName, sizeof(e->m_wmoName), "%s", (wmoName) ? wmoName : "?");
+    const CMapObjGroup* smoGroup = (mapObjDef->m_owner)
+            ? mapObjDef->m_owner->GetGroup(groupNum, 0) : nullptr;
+    e->m_smoFlags = smoGroup ? (uint32_t)smoGroup->m_flags : 0;
+    snprintf(e->m_smoName, sizeof(e->m_smoName), "%s",
+             (smoGroup && smoGroup->m_groupName) ? smoGroup->m_groupName : "-");
+    e->m_x0 = group->m_bbox.b.x;
+    e->m_x1 = group->m_bbox.t.x;
+    e->m_y0 = group->m_bbox.b.y;
+    e->m_y1 = group->m_bbox.t.y;
+    e->m_z0 = group->m_bbox.b.z;
+    e->m_z1 = group->m_bbox.t.z;
+    // LOCAL group bbox + instance matrix: the client builds the minimap quad grid in
+    // WMO-local space (CMapObjGroup::m_bbox) and places it with the instance matrix
+    // (CMapEntity::QueryMapObjMinimap uses m_invMat for the query; RenderInsideTexture
+    // applies s_indoor.m_matrix = mapObjDef->m_mat). Deriving the grid from the world
+    // AABB scrambles cell indices for rotated instances -> wrong/skewed art.
+    if (smoGroup) {
+        e->m_lx0 = smoGroup->m_bbox.b.x;
+        e->m_lx1 = smoGroup->m_bbox.t.x;
+        e->m_ly0 = smoGroup->m_bbox.b.y;
+        e->m_ly1 = smoGroup->m_bbox.t.y;
+    } else {
+        e->m_lx0 = e->m_lx1 = e->m_ly0 = e->m_ly1 = 0.0f;
+    }
+    const C44Matrix& mat = mapObjDef->m_mat;
+    e->m_ma = mat.a0;   // wx += a0*lx
+    e->m_mb = mat.b0;   // wx += b0*ly
+    e->m_mc = mat.a1;   // wy += a1*lx
+    e->m_md = mat.b1;   // wy += b1*ly
+    e->m_mtx = mat.d0;
+    e->m_mty = mat.d1;
+    // Default selection: exterior groups (0x8) on, interior off (matches the outdoor
+    // minimap). The serve overrides this with the user's web-UI choice.
+    e->m_selected = (e->m_smoFlags & 0x8) ? 1 : 0;
+    MapBakerQuadCount++;
+}
+
+// Collect EVERY group of a WMO instance the first time the instance is seen. The render
+// hook only visits groups whose 3D geometry is drawn, but a city WMO's real (interior)
+// buildings are not drawn top-down (they sit behind the trick shells), and the client's
+// minimap works from ALL groups of the instance (CMap::CreateMapObjDefGroups builds a
+// def group with a world-space bbox for every WMO group at load time). Enumerating
+// m_defGroups gives the complete set the minimap uses, including the ones this camera
+// never draws.
+static void MapBakerQuadCollectDef(CMapObjDef* mapObjDef) {
+    for (uint32_t i = 0; i < MapBakerQuadCount; i++) {
+        if (MapBakerQuadTable[i].m_def == (const void*)mapObjDef) {
+            return;   // instance already enumerated
+        }
+    }
+    const uint32_t count = (mapObjDef->m_defGroups.m_count == 0xFFFFFFFF)
+            ? mapObjDef->m_defGroups.m_dynamic.m_count : mapObjDef->m_defGroups.m_count;
+    for (uint32_t i = 0; i < count && i < 512; i++) {
+        CMapObjDefGroup* group = mapObjDef->m_defGroups[i];
+        if (group) {
+            MapBakerQuadCollectGroup(group, mapObjDef);
+        }
+    }
+}
+
+// Per-group WMO draw (extracted from RenderMapObjDefGroups). depthOff: painter's
+// (no depth test/write); zInvert: mirror Z about a pivot and disable backface culling.
+static void MapBakerXrayDrawGroup(CMapObjDefGroup* group, CMapObjDef* mapObjDef, bool depthOff, bool zInvert) {
+    CMapObj* mapObj = mapObjDef->m_owner;
+
+    g_theGxDevicePtr->RsPush();
+    if (depthOff) {
+        GxRsSet(GxRs_DepthTest, 0);
+        GxRsSet(GxRs_DepthWrite, 0);
+    }
+    if (zInvert) {
+        GxRsSet(GxRs_Culling, 0);
+    }
+
+    C44Matrix view;
+    C3Vector offset(-CWorldScene::s_activeWorldView.x, -CWorldScene::s_activeWorldView.y, -CWorldScene::s_activeWorldView.z);
+    view.Translate(offset);
+    C44Matrix world = mapObjDef->m_mat;
+    if (zInvert) {
+        // z' = 2*pivot - z with pivot = camZ - K/2, so view-depth d = camZ - z becomes
+        // K - d: lower (deeper) geometry ends up closer to the camera.
+        const float pivot = CWorldScene::s_activeWorldView.z - 0.5f * MapBakerXrayK;
+        C44Matrix mz;
+        mz.Identity();
+        mz.c2 = -1.0f;
+        mz.d2 = 2.0f * pivot;
+        world = world * mz;
+    }
+    world = world * view;
+    // Debug (MAPBAKER_DEBUG_VIEW=1): first two x-ray draws per tile. world.d0/d1 must
+    // track (-camX, -camY) plus the static WMO translation; a stale Y here means the
+    // camera did not reach the draw pass despite the pre-draw probe showing it.
+    if (getenv("MAPBAKER_DEBUG_VIEW")) {
+        static int32_t s_dbgTag = -1;
+        static uint32_t s_dbgN = 0;
+        if (MapBakerDebugTileTag != s_dbgTag) {
+            s_dbgTag = MapBakerDebugTileTag;
+            s_dbgN = 0;
+        }
+        if (s_dbgN < 2) {
+            s_dbgN++;
+            const CGxMatrixStack& vstack = g_theGxDevicePtr->m_xforms[GxXform_View];
+            const C44Matrix& vm = vstack.m_mtx[vstack.m_level];
+            fprintf(stderr,
+                    "MapBaker dbg: xraydraw tile(%d,%d) n=%u worldT=(%.1f,%.1f,%.1f) "
+                    "matT=(%.1f,%.1f,%.1f) saw=(%.1f,%.1f,%.1f)\n",
+                    MapBakerDebugTileTag / 64, MapBakerDebugTileTag % 64, s_dbgN,
+                    world.d0, world.d1, world.d2,
+                    mapObjDef->m_mat.d0, mapObjDef->m_mat.d1, mapObjDef->m_mat.d2,
+                    CWorldScene::s_activeWorldView.x, CWorldScene::s_activeWorldView.y,
+                    CWorldScene::s_activeWorldView.z);
+            fprintf(stderr,
+                    "MapBaker dbg: xraydraw viewT=(%.3f,%.3f,%.3f) "
+                    "view=(%.4f,%.4f,%.4f,%.4f | %.4f,%.4f,%.4f,%.4f | %.4f,%.4f,%.4f,%.4f)\n",
+                    vm.d0, vm.d1, vm.d2,
+                    vm.a0, vm.a1, vm.a2, vm.a3,
+                    vm.b0, vm.b1, vm.b2, vm.b3,
+                    vm.c0, vm.c1, vm.c2, vm.c3);
+            fflush(stderr);
+        }
+    }
+    CWorldScene::SetWorldProjection(world);
+
+    int32_t interior = (group->m_flags >> 15) & 1;
+
+    if (group->m_liquidInstance && group->m_liquidInstance->m_environment) {
+        group->m_liquidInstance->m_environment->SetInteriorFog(interior);
+    }
+
+    CM2Lighting lighting(group->m_sphere);
+    World::s_m2Scene->SelectLights(&lighting);
+    group->SelectLights(&lighting);
+    DayNight::DNInfo* info = DayNight::GetInfo();
+    CWorldScene::SetupLighting(&lighting, &CWorldScene::s_activeWorldView);
+
+    if (static_cast<uint32_t>(mapObjDef->m_objectGuid.m_guid) && mapObjDef->m_objectGuid == s_highlightedObjectGuid) {
+        CMapObj::SetEmissiveAmbient(info->m_light1.m_ambient);
+    }
+
+    s_curGroupIsInterior = interior;
+    mapObj->RenderGroup(group->m_groupNum, mapObjDef->m_invMat, &group->m_frustumList);
+    g_theGxDevicePtr->RsPop();
+}
+
+struct MapBakerXrayEntry {
+    CMapObjDefGroup* group;
+    CMapObjDef* def;
+    float z; // group bbox center world-Z (sort key)
+};
+
+static MapBakerXrayEntry s_mapBakerXrayBuf[4096];
+
+static int32_t MapBakerXrayCmp(const void* a, const void* b) {
+    const MapBakerXrayEntry* ea = static_cast<const MapBakerXrayEntry*>(a);
+    const MapBakerXrayEntry* eb = static_cast<const MapBakerXrayEntry*>(b);
+    const float dz = ea->z - eb->z;
+    if (dz == 0.0f) {
+        return 0;
+    }
+    // Array order == draw order; the last entry is drawn last and sits on top.
+    const int32_t cmp = (dz < 0.0f) ? -1 : 1;
+    return MapBakerXrayLowLast ? cmp : -cmp;
+}
+
+// VERIFY: a040cfec manual (MapBaker: x-ray gating added)
 // OFFSET: 0x007964A0
 void CWorldScene::RenderMapObjDefGroups() {
     g_theGxDevicePtr->RsPush();
     CWorldScene::frustumIndex++;
     CWorldScene::frustumStack[CWorldScene::frustumIndex] = CWorldScene::frustumStack[CWorldScene::frustumIndex - 1];
     CShadowCache::SetShadowMapGenericGlobal();
+
+    const bool xrayOn = (MapBakerXrayMode != 0);
+    const bool xrayZSort = (MapBakerXrayMode == 2);
+    uint32_t xrayCount = 0;
 
     CMapObjDefGroup* group = CWorldScene::sortTable.m_mapObjDefGroup.Head();
 
@@ -2998,33 +3331,37 @@ void CWorldScene::RenderMapObjDefGroups() {
         group->m_sortTableLink.Unlink();
 
         CMapObjDef* mapObjDef = static_cast<CMapObjDef*>(group->m_parentLinkList.Head()->m_ref);
-        CMapObj* mapObj = mapObjDef->m_owner;
 
         if (CWorld::enables & Enable_MapObjs) {
-            C44Matrix view;
-            C3Vector offset(-CWorldScene::s_activeWorldView.x, -CWorldScene::s_activeWorldView.y, -CWorldScene::s_activeWorldView.z);
-            view.Translate(offset);
-            C44Matrix world = mapObjDef->m_mat * view;
-            CWorldScene::SetWorldProjection(world);
+            const int32_t gidx = (xrayOn ? MapBakerXrayGateIdx(mapObjDef) : -1);
+            const bool gated = (gidx >= 0) || (gidx == -2);
 
-            int32_t interior = (group->m_flags >> 15) & 1;
-
-            if (group->m_liquidInstance && group->m_liquidInstance->m_environment) {
-                group->m_liquidInstance->m_environment->SetInteriorFog(interior);
+            if (MapBakerQuadCollect) {
+                MapBakerQuadCollectDef(mapObjDef);
             }
 
-            CM2Lighting lighting(group->m_sphere);
-            World::s_m2Scene->SelectLights(&lighting);
-            group->SelectLights(&lighting);
-            DayNight::DNInfo* info = DayNight::GetInfo();
-            CWorldScene::SetupLighting(&lighting, &CWorldScene::s_activeWorldView);
-
-            if (static_cast<uint32_t>(mapObjDef->m_objectGuid.m_guid) && mapObjDef->m_objectGuid == s_highlightedObjectGuid) {
-                CMapObj::SetEmissiveAmbient(info->m_light1.m_ambient);
+            if (MapBakerXrayDump && xrayOn) {
+                MapBakerXrayDumpWmo(group, mapObjDef, gidx);
             }
 
-            s_curGroupIsInterior = interior;
-            mapObj->RenderGroup(group->m_groupNum, mapObjDef->m_invMat, &group->m_frustumList);
+            if (!xrayOn || !gated) {
+                MapBakerXrayDrawGroup(group, mapObjDef, false, false);
+            } else if (MapBakerXrayTrickSkip(mapObjDef, gidx)) {
+                // Perspective-trick distance model: not part of the original city view;
+                // skip the geometry entirely rather than x-ray it into the city.
+            } else if (MapBakerXrayMode == 1) { // depthoff: natural order
+                MapBakerXrayDrawGroup(group, mapObjDef, true, false);
+            } else if (MapBakerXrayMode == 3) { // zinv: depth stays on
+                MapBakerXrayDrawGroup(group, mapObjDef, false, true);
+            } else if (xrayZSort && xrayCount < 4096) {
+                // Defer: drawn after the non-x-ray groups, Z-sorted (last = on top).
+                s_mapBakerXrayBuf[xrayCount].group = group;
+                s_mapBakerXrayBuf[xrayCount].def = mapObjDef;
+                s_mapBakerXrayBuf[xrayCount].z = (group->m_bbox.b.z + group->m_bbox.t.z) * 0.5f;
+                xrayCount++;
+            } else {
+                MapBakerXrayDrawGroup(group, mapObjDef, true, false); // overflow fallback
+            }
         }
 
         CWFrustum* frustum = group->m_frustumList.Head();
@@ -3037,6 +3374,17 @@ void CWorldScene::RenderMapObjDefGroups() {
         }
 
         group = next;
+    }
+
+    if (xrayCount) {
+        qsort(s_mapBakerXrayBuf, xrayCount, sizeof(s_mapBakerXrayBuf[0]), MapBakerXrayCmp);
+        g_theGxDevicePtr->RsPush();
+        GxRsSet(GxRs_DepthTest, 0);
+        GxRsSet(GxRs_DepthWrite, 0);
+        for (uint32_t i = 0; i < xrayCount; i++) {
+            MapBakerXrayDrawGroup(s_mapBakerXrayBuf[i].group, s_mapBakerXrayBuf[i].def, true, false);
+        }
+        g_theGxDevicePtr->RsPop();
     }
 
     CWorldScene::frustumIndex--;
@@ -3706,6 +4054,34 @@ void CWorldScene::RenderChunksSinglePass() {
 // OFFSET: 0x00798DA0
 void CWorldScene::RenderChunks() {
     g_theGxDevicePtr->RsPush();
+
+    // MapBaker diagnostic (MAPBAKER_DEBUG_VIEW=1): the device world stack at terrain-pass
+    // time. The shader-vertex terrain path ignores it (const 0 carries the transform), but
+    // if the VS uses const 31 (worldStack x viewStack) this is what it sees.
+    if (getenv("MAPBAKER_DEBUG_VIEW")) {
+        const CGxMatrixStack& ws = g_theGxDevicePtr->m_xforms[GxXform_World];
+        const C44Matrix& wm = ws.m_mtx[ws.m_level];
+        const CGxMatrixStack& vs = g_theGxDevicePtr->m_xforms[GxXform_View];
+        const C44Matrix& vm2 = vs.m_mtx[vs.m_level];
+        fprintf(stderr,
+                "MapBaker dbg: rendchunks tag=%d world=(%.4f,%.4f,%.4f,%.4f | %.4f,%.4f,%.4f,%.4f | "
+                "%.4f,%.4f,%.4f,%.4f | %.4f,%.4f,%.4f,%.4f) view=(%.4f,%.4f,%.4f,%.4f | "
+                "%.4f,%.4f,%.4f,%.4f | %.4f,%.4f,%.4f,%.4f | %.4f,%.4f,%.4f,%.4f) "
+                "saw=(%.1f,%.1f,%.1f)\n",
+                MapBakerDebugTileTag,
+                wm.a0, wm.a1, wm.a2, wm.a3,
+                wm.b0, wm.b1, wm.b2, wm.b3,
+                wm.c0, wm.c1, wm.c2, wm.c3,
+                wm.d0, wm.d1, wm.d2, wm.d3,
+                vm2.a0, vm2.a1, vm2.a2, vm2.a3,
+                vm2.b0, vm2.b1, vm2.b2, vm2.b3,
+                vm2.c0, vm2.c1, vm2.c2, vm2.c3,
+                vm2.d0, vm2.d1, vm2.d2, vm2.d3,
+                CWorldScene::s_activeWorldView.x, CWorldScene::s_activeWorldView.y,
+                CWorldScene::s_activeWorldView.z);
+        fflush(stderr);
+    }
+
     CMapRenderChunk::s_fogColor = *reinterpret_cast<CImVector*>(&g_theGxDevicePtr->m_appRenderStates[GxRs_FogColor].m_value.m_data.i[0]);
 
     if (CMap::enableTerrainShaderVertex) {

@@ -963,6 +963,11 @@ void GxReadPixels(CiRect& rect, TSGrowableArray<CImVector>& pixels) {
     g_theGxDevicePtr->DeviceReadPixels(rect, pixels);
 }
 
+// MapBaker: read back a region of the current render-target texture.
+void GxReadRenderTarget(CGxTex* texture, CiRect& rect, TSGrowableArray<CImVector>& pixels) {
+    g_theGxDevicePtr->DeviceReadRenderTarget(texture, rect, pixels);
+}
+
 // VERIFY: fdd977f9 auto
 // OFFSET: 0x00681530
 int32_t GxTexStretch(CGxTex* dest, const CiRect* destRect, const CiRect* sourceRect, uint32_t level, uint32_t face) {
