@@ -16,6 +16,7 @@ Usage:
       --tx0 24 --tx1 44 --ty0 20 --ty1 61 --px 1024
 """
 import argparse
+import concurrent.futures
 import os
 import subprocess
 import sys
@@ -82,12 +83,22 @@ def main():
     ap.add_argument('--ty1', type=int, required=True)
     ap.add_argument('--px', type=int, default=1024)
     ap.add_argument('--background', default='0a2a44')
-    ap.add_argument('--jobs', default='4')
+    ap.add_argument('--work', default=None,
+                    help='directory for the big .v intermediates (default: --out; put this on a '
+                         'local SSD when --out is a network share)')
+    ap.add_argument('--row-jobs', type=int, default=max(1, (os.cpu_count() or 4)),
+                    help='parallel vips arrayjoin processes for the row strips')
+    ap.add_argument('--concurrency', type=int, default=max(1, os.cpu_count() or 4),
+                    help='VIPS_CONCURRENCY for the big single ops (tiffsave/dzsave)')
     args = ap.parse_args()
+    vips_env = dict(os.environ)
+    vips_env['VIPS_CONCURRENCY'] = str(args.concurrency)
 
     os.makedirs(args.out, exist_ok=True)
+    work = args.work if args.work else args.out
+    os.makedirs(work, exist_ok=True)
     bg_rgb = tuple(int(args.background[i:i + 2], 16) for i in (0, 2, 4))
-    empty = os.path.join(args.out, '_empty.png')
+    empty = os.path.join(work, '_empty.png')
     write_solid_png(empty, args.px, bg_rgb)
     log('background tile %s (%dx%d #%s)' % (empty, args.px, args.px, args.background))
 
@@ -96,8 +107,11 @@ def main():
     W, H = n_tx * args.px, n_ty * args.px
     log('grid %dx%d tiles = %dx%d px (%.2f Gpx)' % (n_tx, n_ty, W, H, W * H / 1e9))
 
+    # Scan the grid first (missing/flat detection), then build the row strips in parallel:
+    # each row is an independent vips arrayjoin process (PNG decode + .v write).
     rows = []
     used, missing, flat = 0, 0, 0
+    row_jobs = []
     for ty in range(args.ty0, args.ty1 + 1):
         row_files = []
         for tx in range(args.tx0, args.tx1 + 1):
@@ -112,20 +126,34 @@ def main():
                 continue
             used += 1
             row_files.append(p)
-        row_v = os.path.join(args.out, 'row_%03d.v' % ty)
+        row_v = os.path.join(work, 'row_%03d.v' % ty)
+        rows.append(row_v)
+        row_jobs.append((ty, row_files, row_v))
+    log('tiles: %d used, %d missing, %d flat -> background; building %d row strips '
+        'with %d parallel jobs' % (used, missing, flat, len(row_jobs), args.row_jobs))
+
+    def build_row(job):
+        ty, row_files, row_v = job
         # vips arrayjoin takes the input list as ONE space-separated argument.
         r = subprocess.run([VIPS, 'arrayjoin', ' '.join(vp(f) for f in row_files), vp(row_v),
-                            '--across', str(n_tx)], capture_output=True, text=True)
-        if r.returncode != 0:
-            log('arrayjoin failed for row %d: %s' % (ty, r.stderr[-500:]))
-            sys.exit(1)
-        rows.append(row_v)
-        log('row %d/%d done (%d real tiles)' % (ty - args.ty0 + 1, n_ty, len(row_files)))
-    log('tiles: %d used, %d missing, %d flat -> background' % (used, missing, flat))
+                            '--across', str(n_tx)], capture_output=True, text=True, env=vips_env)
+        return ty, r.returncode, r.stderr
 
-    mosaic = os.path.join(args.out, '%s-mosaic.v' % args.name)
+    done_rows = 0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.row_jobs) as pool:
+        futures = [pool.submit(build_row, job) for job in row_jobs]
+        for fut in concurrent.futures.as_completed(futures):
+            ty, rc, err = fut.result()
+            if rc != 0:
+                log('arrayjoin failed for row %d: %s' % (ty, err[-500:]))
+                sys.exit(1)
+            done_rows += 1
+            log('row %d/%d done' % (done_rows, len(row_jobs)))
+
+    mosaic = os.path.join(work, '%s-mosaic.v' % args.name)
+    log('assembling mosaic (%.2f GB) ...' % (W * H * 3 / 1e9))
     r = subprocess.run([VIPS, 'arrayjoin', ' '.join(vp(r) for r in rows), vp(mosaic),
-                        '--across', '1'], capture_output=True, text=True)
+                        '--across', '1'], capture_output=True, text=True, env=vips_env)
     if r.returncode != 0:
         log('mosaic arrayjoin failed: %s' % r.stderr[-500:])
         sys.exit(1)
@@ -136,7 +164,8 @@ def main():
     r = subprocess.run([VIPS, 'tiffsave', vp(mosaic), vp(tif),
                         '--tile', '--tile-width', '512', '--tile-height', '512',
                         '--pyramid', '--bigtiff', '--compression', 'deflate',
-                        '--predictor', 'horizontal'], capture_output=True, text=True)
+                        '--predictor', 'horizontal'], capture_output=True, text=True,
+                       env=vips_env)
     if r.returncode != 0:
         log('tiffsave failed: %s' % r.stderr[-500:])
         sys.exit(1)
@@ -147,7 +176,7 @@ def main():
     r = subprocess.run([VIPS, 'dzsave', vp(mosaic), vp(xyz),
                         '--layout', 'google', '--tile-size', '512',
                         '--suffix', '.jpg[Q=90]', '--background', '0 0 0'],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, env=vips_env)
     if r.returncode != 0:
         log('dzsave failed: %s' % r.stderr[-500:])
         sys.exit(1)
@@ -155,7 +184,7 @@ def main():
 
     preview = os.path.join(args.out, '%s-preview.jpg' % args.name)
     subprocess.run([VIPS, 'thumbnail', vp(mosaic), vp(preview), '2048', '--height', '2048'],
-                   capture_output=True, text=True)
+                   capture_output=True, text=True, env=vips_env)
     log('preview: %s' % preview)
 
     # Self-contained pan/zoom viewer for the XYZ pyramid.
