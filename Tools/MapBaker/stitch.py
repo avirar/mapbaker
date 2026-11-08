@@ -171,31 +171,28 @@ def main():
         sys.exit(1)
     log('BigTIFF: %s (%.1f MB)' % (tif, os.path.getsize(tif) / 1e6))
 
-    xyz = os.path.join(args.out, '%s-xyz' % args.name)
-    log('writing XYZ pyramid ...')
-    r = subprocess.run([VIPS, 'dzsave', vp(mosaic), vp(xyz),
-                        '--layout', 'google', '--tile-size', '512',
-                        '--suffix', '.jpg[Q=90]', '--background', '0 0 0'],
+    # DZI (Deep Zoom Image) is the reliable pyramid for OpenSeadragon. NOTE: vips
+    # dzsave --layout google writes {z}/{row}/{col}.jpg (x/y swapped vs the XYZ spec),
+    # which scrambles every standard XYZ viewer at zoom; DZI is unambiguous.
+    dzi = os.path.join(args.out, args.name)
+    log('writing DZI pyramid ...')
+    r = subprocess.run([VIPS, 'dzsave', vp(mosaic), vp(dzi),
+                        '--layout', 'dz', '--tile-size', '512', '--overlap', '1',
+                        '--suffix', '.jpg[Q=90]'],
                        capture_output=True, text=True, env=vips_env)
     if r.returncode != 0:
         log('dzsave failed: %s' % r.stderr[-500:])
         sys.exit(1)
-    log('XYZ pyramid: %s' % xyz)
+    log('DZI pyramid: %s.dzi + %s_files/' % (dzi, dzi))
 
     preview = os.path.join(args.out, '%s-preview.jpg' % args.name)
     subprocess.run([VIPS, 'thumbnail', vp(mosaic), vp(preview), '2048', '--height', '2048'],
                    capture_output=True, text=True, env=vips_env)
     log('preview: %s' % preview)
 
-    # Self-contained pan/zoom viewer for the XYZ pyramid.
-    max_z = 0
-    while (max(W, H) >> max_z) > 512:
-        max_z += 1
     viewer = os.path.join(args.out, 'viewer.html')
     with open(viewer, 'w', encoding='utf-8') as f:
         f.write(VIEWER_HTML.replace('@NAME@', args.name)
-                .replace('@W@', str(W)).replace('@H@', str(H))
-                .replace('@MAXZ@', str(max_z))
                 .replace('@TX0@', str(args.tx0)).replace('@TY0@', str(args.ty0))
                 .replace('@PX@', str(args.px)).replace('@TITLE@', args.name))
     log('viewer: %s' % viewer)
@@ -203,65 +200,65 @@ def main():
 
 
 VIEWER_HTML = r'''<!doctype html>
-<html><head><meta charset="utf-8"><title>@TITLE@</title>
+<html>
+<head>
+<meta charset="utf-8">
+<title>@TITLE@</title>
 <style>
   html,body{margin:0;height:100%;background:#0a2a44;overflow:hidden}
-  canvas{display:block;cursor:grab}
-  #hud{position:fixed;left:8px;top:8px;color:#cfe3f5;font:12px/1.4 Consolas,monospace;
-       background:#0008;padding:6px 8px;border-radius:4px;pointer-events:none}
-  #btns{position:fixed;right:8px;top:8px;display:flex;gap:4px}
-  #btns button{background:#123;color:#cfe3f5;border:1px solid #356;border-radius:4px;padding:4px 8px;cursor:pointer}
-</style></head><body>
-<canvas id="c"></canvas>
-<div id="hud"></div>
-<div id="btns"><button id="zi">+</button><button id="zo">-</button><button id="zr">reset</button></div>
+  #osd{width:100vw;height:100vh}
+  #hud{position:fixed;left:10px;top:10px;z-index:10;color:#d7e6f5;
+       font:12px/1.5 Consolas,monospace;background:rgba(0,0,0,.55);
+       padding:8px 12px;border-radius:5px;pointer-events:none;white-space:pre}
+  #hud b{color:#9fd0ff;font-weight:600}
+</style>
+</head>
+<body>
+<div id="osd"></div>
+<div id="hud">loading…</div>
 <script>
-const NAME='@NAME@', IW=@W@, IH=@H@, MAXZ=@MAXZ@;
 const TX0=@TX0@, TY0=@TY0@, PX=@PX@;
 const A=533.33331, O=17066.666;
-const cv=document.getElementById('c'), ctx=cv.getContext('2d');
-let scale=0.06, panX=0, panY=0;      // screen px per image px, image px at screen origin
-const cache=new Map();
-function resize(){cv.width=innerWidth;cv.height=innerHeight;}
-addEventListener('resize',resize); resize();
-function fit(){scale=Math.min(cv.width/IW, cv.height/IH); panX=(cv.width-IW*scale)/2; panY=(cv.height-IH*scale)/2; draw();}
-function tile(z,tx,ty){
-  const k=z+'/'+tx+'/'+ty; let im=cache.get(k);
-  if(!im){ im=new Image(); im.onload=()=>draw(); im.onerror=()=>{}; im.src=NAME+'-xyz/'+z+'/'+tx+'/'+ty+'.jpg'; cache.set(k,im); }
-  return im;
-}
-function draw(){
-  ctx.fillStyle='#0a2a44'; ctx.fillRect(0,0,cv.width,cv.height);
-  let z=Math.round(Math.log2(scale))+MAXZ; z=Math.max(0,Math.min(MAXZ,z));
-  const step=512*Math.pow(2,MAXZ-z);           // image px per tile at this z
-  const sx=step*scale;                          // screen px per tile
-  const x0=Math.max(0,Math.floor(-panX/sx)), y0=Math.max(0,Math.floor(-panY/sx));
-  const x1=Math.min(Math.ceil(IW/step), Math.ceil((cv.width-panX)/sx)+1);
-  const y1=Math.min(Math.ceil(IH/step), Math.ceil((cv.height-panY)/sx)+1);
-  for(let ty=y0;ty<y1;ty++) for(let tx=x0;tx<x1;tx++){
-    const im=tile(z,tx,ty); if(im && im.complete && im.width) ctx.drawImage(im, panX+tx*sx, panY+ty*sx, sx+0.5, sx+0.5);
+function initOSD(){
+  const viewer=OpenSeadragon({
+    id:'osd',
+    prefixUrl:'openseadragon/images/',
+    tileSources:'@NAME@.dzi',
+    showNavigator:true,navigatorPosition:'BOTTOM_RIGHT',navigatorHeight:220,navigatorWidth:140,
+    gestureSettingsMouse:{clickToZoom:false,dblClickToZoom:true},
+    maxZoomPixelRatio:3,visibilityRatio:1,constrainDuringPan:true,
+    animationTime:0.35,blendTime:0.1,imageLoaderLimit:12,timeout:60000
+  });
+  const hud=document.getElementById('hud');
+  function update(){
+    const img=viewer.world.getItemAt(0); if(!img) return;
+    const c=viewer.viewport.getCenter(true);
+    const p=img.viewportToImageCoordinates(c);
+    const ix=p.x, iy=p.y;
+    const tx=TX0+Math.floor(ix/PX), ty=TY0+Math.floor(iy/PX);
+    const wy=O-(TX0+ix/PX)*A, wx=O-(TY0+iy/PX)*A;
+    hud.innerHTML='<b>map 0</b>  ADT <b>('+tx+', '+ty+')</b>\n'+
+      'world <b>'+wx.toFixed(1)+', '+wy.toFixed(1)+'</b>\n'+
+      'image '+ix.toFixed(0)+', '+iy.toFixed(0)+' px   zoom '+
+      (viewer.viewport.getZoom(true)*100).toFixed(0)+'%';
   }
-  const ix=(cv.width/2-panX)/scale, iy=(cv.height/2-panY)/scale;
-  const tx=TX0+Math.floor(ix/PX), ty=TY0+Math.floor(iy/PX);
-  const wx=O-(ty+(iy%PX)/PX)*A, wy=O-(tx+(ix%PX)/PX)*A;
-  document.getElementById('hud').textContent =
-    'map 0  ADT ('+tx+','+ty+')  world '+wx.toFixed(0)+','+wy.toFixed(0)+'  z'+z+'  '+Math.round(scale*100)+'%';
+  viewer.addHandler('open',update);
+  ['animation','animation-finish','resize','zoom','pan','canvas-scroll'].forEach(function(e){viewer.addHandler(e,update);});
+  window.addEventListener('keydown',function(e){ if(e.key==='f'||e.key==='F') viewer.viewport.goHome(); });
 }
-let drag=null;
-cv.addEventListener('mousedown',e=>{drag={x:e.clientX,y:e.clientY,px:panX,py:panY};cv.style.cursor='grabbing';});
-addEventListener('mouseup',()=>{drag=null;cv.style.cursor='grab';});
-addEventListener('mousemove',e=>{ if(!drag) return; panX=drag.px+(e.clientX-drag.x); panY=drag.py+(e.clientY-drag.y); draw(); });
-cv.addEventListener('wheel',e=>{ e.preventDefault();
-  const f=e.deltaY<0?1.25:0.8; const mx=e.clientX, my=e.clientY;
-  const ix=(mx-panX)/scale, iy=(my-panY)/scale;
-  scale=Math.max(0.005,Math.min(4,scale*f));
-  panX=mx-ix*scale; panY=my-iy*scale; draw();
-},{passive:false});
-document.getElementById('zi').onclick=()=>{scale*=1.4;draw();};
-document.getElementById('zo').onclick=()=>{scale/=1.4;draw();};
-document.getElementById('zr').onclick=fit;
-fit();
-</script></body></html>
+(function(){
+  var s=document.createElement('script');
+  s.src='openseadragon/openseadragon.min.js';
+  s.onload=initOSD;
+  s.onerror=function(){
+    var c=document.createElement('script');
+    c.src='https://cdn.jsdelivr.net/npm/openseadragon@6.1.1/build/openseadragon/openseadragon.min.js';
+    c.onload=initOSD; document.head.appendChild(c);
+  };
+  document.head.appendChild(s);
+})();
+</script>
+</body></html>
 '''
 
 
