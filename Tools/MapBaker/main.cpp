@@ -195,7 +195,10 @@ static void Usage() {
     printf("                      terrain (minimap look; avoids the trick distance models)\n");
     printf("  --quad-tint         with --quads: draw flat per-class tint rectangles instead of the\n");
     printf("                      real per-cell minimap .blp art (diagnostic fallback)\n");
-    printf("  --quad-wmo          with --quads: also render the 3D WMO underneath (hybrid)\n");
+    printf("  --no-quad-wmo       with --quads: do NOT render the 3D WMO underneath\n");
+    printf("                      (default is ON: 3D WMO + districts + quad art on top)\n");
+    printf("  --no-quad-fill      with 3D WMO: do NOT add the groups the client's viewpoint\n");
+    printf("                      cull skips (city districts; default is to fill them in)\n");
     printf("  --quad-alpha <0-255>  quad overlay alpha (default 160; art mode uses 255)\n");
     printf("  --quad-sel <mode>   which groups apply: none | all | ext (default) | int\n");
     printf("  --quad-dump <file>  write the collected group table (i/wmo/grp/smo/ext/sel/bbox)\n");
@@ -235,6 +238,8 @@ int main(int argc, char** argv) {
     // with no art). --quad-tint falls back to exterior flat tints.
     config.quadSel = 1;
     config.quadArt = true;  // real per-cell minimap art (--quad-tint forces flat tints)
+    config.quadFill = true; // draw the WMO groups the viewpoint cull skips (districts)
+    config.quadWmo = true;  // 3D WMO underneath the art (the comprehensive map look)
     config.quadDump = nullptr;
     config.serve = false;
     config.port = 8742;
@@ -336,6 +341,12 @@ int main(int argc, char** argv) {
             config.quadSel = 2;   // flat tints: exterior only (previous default)
         } else if (!strcmp(argv[i], "--quad-wmo")) {
             config.quadWmo = true;
+        } else if (!strcmp(argv[i], "--no-quad-wmo")) {
+            config.quadWmo = false;
+        } else if (!strcmp(argv[i], "--no-quad-fill")) {
+            config.quadFill = false;
+        } else if (!strcmp(argv[i], "--quad-fill")) {
+            config.quadFill = true;
         } else if (!strcmp(argv[i], "--quad-alpha") && i + 1 < argc) {
             config.quadAlpha = static_cast<float>(strtod(argv[++i], nullptr)) / 255.0f;
         } else if (!strcmp(argv[i], "--quad-dump") && i + 1 < argc) {

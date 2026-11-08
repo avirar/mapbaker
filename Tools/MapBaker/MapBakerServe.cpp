@@ -49,6 +49,7 @@ namespace {
         // the region) the first time quads are turned on, or on qcollect.
         uint32_t qon;        // composite the selected quads
         uint32_t qart;       // draw the real per-cell minimap .blp art (1) vs flat tints (0)
+        uint32_t qfill = 1;  // with the 3D WMO: also draw the viewpoint-culled groups
         uint32_t qwmo;       // also render the 3D WMO underneath (0 = terrain-only)
         uint32_t qalpha;     // quad alpha 0..255
         uint32_t qext[3];    // exterior tint (RGB)
@@ -487,7 +488,8 @@ a { color: #79b8ff; text-decoration: none; }
       <legend>WMO quads (2D)</legend>
       <div class="row"><label>2D quads</label><input id="qon" type="checkbox"></div>
       <div class="row"><label>minimap art</label><input id="qart" type="checkbox" checked title="draw the real per-cell Textures\Minimap .blp art (uncheck = flat tints)"></div>
-      <div class="row"><label>3D WMO under</label><input id="qwmo" type="checkbox"></div>
+      <div class="row"><label>3D WMO under</label><input id="qwmo" type="checkbox" checked title="render the real 3D WMO beneath the quad art"></div>
+      <div class="row"><label>fill districts</label><input id="qfill" type="checkbox" checked title="with 3D WMO on: also draw the groups the client's viewpoint cull skips (city districts, streets, plazas)"></div>
       <div class="row"><label>recollect</label><input id="qcollect" type="checkbox" title="force a fresh group-collection pass (slower render)"></div>
       <div class="row"><label>alpha</label><input id="qalpha" type="range" min="0" max="255" value="160"><span id="qalv" style="font-size:11px;color:#6d7686;">160</span></div>
       <div class="row"><label>ext tint</label><input id="qext" type="color" value="#e8e0c8"></div>
@@ -550,7 +552,7 @@ function qs() {
     '&ssaa=' + $('ssaa').value + '&nowmo=' + ($('nowmo').checked ? 1 : 0) +
     '&dump=' + ($('dump').checked ? 1 : 0) +
     '&qon=' + ($('qon').checked ? 1 : 0) + '&qart=' + ($('qart').checked ? 1 : 0) +
-    '&qwmo=' + ($('qwmo').checked ? 1 : 0) +
+    '&qfill=' + ($('qfill').checked ? 1 : 0) + '&qwmo=' + ($('qwmo').checked ? 1 : 0) +
     '&qcollect=' + ($('qcollect').checked ? 1 : 0) + '&qalpha=' + $('qalpha').value +
     '&qext=' + $('qext').value.slice(1) + '&qint=' + $('qint').value.slice(1);
   // Explicit per-group selection: only sent once the list is loaded (empty = all off).
@@ -562,7 +564,8 @@ function formFrom(s) {
   $('scope').value = s.scope; $('light').value = s.light; $('citylight').value = s.citylight;
   $('gain').value = s.gain; $('px').value = s.px; $('ssaa').value = s.ssaa;
   $('nowmo').checked = !!s.nowmo; $('dump').checked = !!s.dump;
-  $('qon').checked = !!s.qon; $('qart').checked = !!s.qart; $('qwmo').checked = !!s.qwmo;
+  $('qon').checked = !!s.qon; $('qart').checked = !!s.qart; $('qfill').checked = !!s.qfill;
+  $('qwmo').checked = !!s.qwmo;
   $('qalpha').value = s.qalpha; $('qalv').textContent = s.qalpha;
   $('qext').value = '#' + s.qext; $('qint').value = '#' + s.qint;
   cliUpdate();
@@ -580,6 +583,7 @@ function cliUpdate() {
   if (p.get('qon') === '1') {
     c += ' --quads --quad-alpha ' + p.get('qalpha');
     if (p.get('qart') !== '1') c += ' --quad-tint';
+    if (p.get('qfill') !== '1') c += ' --no-quad-fill';
     if (p.get('qwmo') === '1') c += ' --quad-wmo';
     // NB: per-group selection is serve-only (the CLI has no group list).
   }
@@ -817,12 +821,13 @@ tick(); loadPresets(); cliUpdate();
                 (uint8_t)j.qext[0], (uint8_t)j.qext[1], (uint8_t)j.qext[2],
                 (uint8_t)j.qint[0], (uint8_t)j.qint[1], (uint8_t)j.qint[2]);
         MapBakerWorld::SetQuadArt(j.qart ? 1 : 0, 255);
+        MapBakerWorld::SetQuadFill(j.qfill ? 1 : 0);
 
         fprintf(stderr, "MapBaker serve: apply mode=%u zdir=%u k=%.0f skip=%.0f scope=%u "
                         "light=%.0f citylight=%.0f gain=%.3f px=%d ssaa=%d nowmo=%u dump=%u "
-                        "qon=%u qart=%u qwmo=%u qalpha=%u groups=%u sel=%s\n",
+                        "qon=%u qart=%u qfill=%u qwmo=%u qalpha=%u groups=%u sel=%s\n",
                 j.mode, j.zdir, j.k, j.skip, j.scope, j.light, j.citylight, j.gain, j.px, j.ssaa,
-                (unsigned)j.nowmo, j.dump, j.qon, j.qart, j.qwmo, j.qalpha, MapBakerQuadCount,
+                (unsigned)j.nowmo, j.dump, j.qon, j.qart, j.qfill, j.qwmo, j.qalpha, MapBakerQuadCount,
                 j.qselPresent ? (j.qsel.empty() ? "none" : j.qsel.c_str()) : "keep");
     }
 
@@ -1345,11 +1350,13 @@ tick(); loadPresets(); cliUpdate();
         }
         const int32_t qon = GetParamI(q, "qon", 0);
         const int32_t qart = GetParamI(q, "qart", 1);
+        const int32_t qfill = GetParamI(q, "qfill", 1);
         const int32_t qwmo = GetParamI(q, "qwmo", 0);
         const int32_t qcollect = GetParamI(q, "qcollect", 0);
         if ((qon != 0 && qon != 1) || (qart != 0 && qart != 1) ||
+            (qfill != 0 && qfill != 1) ||
             (qwmo != 0 && qwmo != 1) || (qcollect != 0 && qcollect != 1)) {
-            *err = "qon/qart/qwmo/qcollect must be 0 or 1";
+            *err = "qon/qart/qfill/qwmo/qcollect must be 0 or 1";
             return false;
         }
         const int32_t qalpha = GetParamI(q, "qalpha", 160);
@@ -1407,6 +1414,7 @@ tick(); loadPresets(); cliUpdate();
         j->nowmo = nowmo != 0;
         j->qon = (uint32_t)qon;
         j->qart = (uint32_t)qart;
+        j->qfill = (uint32_t)qfill;
         j->qwmo = (uint32_t)qwmo;
         j->qalpha = (uint32_t)qalpha;
         memcpy(j->qext, ext, sizeof(j->qext));
@@ -1425,13 +1433,14 @@ tick(); loadPresets(); cliUpdate();
         sprintf(set,
                 "{\"mode\":%u,\"zdir\":%u,\"k\":%.6g,\"skip\":%.6g,\"scope\":%u,\"light\":%.6g,"
                 "\"citylight\":%.6g,\"gain\":%.6g,\"px\":%d,\"ssaa\":%d,\"nowmo\":%s,\"dump\":%u,"
-                "\"qon\":%u,\"qart\":%u,\"qwmo\":%u,\"qalpha\":%u,\"qext\":\"%02x%02x%02x\","
+                "\"qon\":%u,\"qart\":%u,\"qfill\":%u,\"qwmo\":%u,\"qalpha\":%u,\"qext\":\"%02x%02x%02x\","
                 "\"qint\":\"%02x%02x%02x\",\"qcount\":%u}",
                 s_state.applied.mode, s_state.applied.zdir, s_state.applied.k, s_state.applied.skip,
                 s_state.applied.scope, s_state.applied.light, s_state.applied.citylight,
                 s_state.applied.gain, s_state.applied.px, s_state.applied.ssaa,
                 s_state.applied.nowmo ? "true" : "false", s_state.applied.dump,
-                s_state.applied.qon, s_state.applied.qart, s_state.applied.qwmo, s_state.applied.qalpha,
+                s_state.applied.qon, s_state.applied.qart, s_state.applied.qfill,
+                s_state.applied.qwmo, s_state.applied.qalpha,
                 s_state.applied.qext[0], s_state.applied.qext[1], s_state.applied.qext[2],
                 s_state.applied.qint[0], s_state.applied.qint[1], s_state.applied.qint[2],
                 MapBakerQuadCount);
@@ -1757,6 +1766,7 @@ tick(); loadPresets(); cliUpdate();
         j.nowmo = c.noWmo;
         j.qon = c.quads ? 1 : 0;
         j.qart = c.quadArt ? 1 : 0;
+        j.qfill = c.quadFill ? 1 : 0;
         j.qwmo = c.quadWmo ? 1 : 0;
         j.qalpha = (uint32_t)(c.quadAlpha * 255.0f + 0.5f);
         // Tints: MUST match the /render parser defaults and the page's color-input

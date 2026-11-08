@@ -32,7 +32,13 @@ struct MapBakerQuadEntry {
     /* 0074 */ float m_x0, m_x1;       // group world bbox, X
     /* 007C */ float m_y0, m_y1;       // group world bbox, Y
     /* 0084 */ float m_z0, m_z1;       // group world bbox, Z (informational)
-    /* 008C */ uint32_t m_smoFlags;    // raw SMO group flags (0x8 ext / 0x40 int-class / 0x8000 int-fog)
+    /* 008C */ uint32_t m_smoFlags;    // raw MOGP group flags (minimap queries use these)
+    /* 0090 */ uint32_t m_mogiFlags;   // MOGI group flags (CMapObj::GetGroupFlags; render culls use these)
+    /* 0094 */ uint32_t m_batchTrans;   // batch counts (transparent / interior / exterior)
+    /* 0098 */ uint32_t m_batchInt;
+    /* 009C */ uint32_t m_batchExt;
+    /* 00A0 */ uint32_t m_batchTotal;
+    /* 00A4 */ uint32_t m_hasColorVerts; // 1 = group has interior vertex colors (MOGP 0x4)
     /* 0090 */ uint8_t m_selected;     // 1 = drawn as a 2D quad in the overlay
     /* 0091 */ uint8_t m_pad[3];
     // LOCAL (WMO) group bbox -- CMapObjGroup::m_bbox. This is the space the client's
@@ -58,6 +64,11 @@ extern uint8_t MapBakerQuadCollect;
 extern uint8_t MapBakerQuadOn;
 // 1 = also render the 3D WMO geometry underneath the quads (0 = terrain-only + quads).
 extern uint8_t MapBakerQuadWmoUnder;
+// 1 = draw WMO groups the client's camera-driven culling skipped (the interior city
+// districts: streets/cobbles/plazas). The 2004 client only draws the groups relevant to
+// the viewpoint, so from a top-down camera the districts are missing and bare terrain
+// shows through. The pass runs after the normal exterior draw and below the 2D art.
+extern uint8_t MapBakerQuadFill;
 // Flat tint per class (RGB 0-255) and a shared alpha (0-255). Exterior vs interior get
 // different colors so the user can see the classification while curating.
 extern uint8_t MapBakerQuadExtColor[3];

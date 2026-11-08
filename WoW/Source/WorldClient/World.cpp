@@ -3151,6 +3151,14 @@ static void MapBakerQuadCollectGroup(CMapObjDefGroup* group, const CMapObjDef* m
     const CMapObjGroup* smoGroup = (mapObjDef->m_owner)
             ? mapObjDef->m_owner->GetGroup(groupNum, 0) : nullptr;
     e->m_smoFlags = smoGroup ? (uint32_t)smoGroup->m_flags : 0;
+    // MOGI flags (what CMapObj::GetGroupFlags returns; the render cull filters use these,
+    // NOT the MOGP flags above) + batch layout, for diagnosing what the 3D pass draws.
+    e->m_mogiFlags = (mapObjDef->m_owner) ? mapObjDef->m_owner->GetGroupFlags(groupNum) : 0;
+    e->m_batchTrans = smoGroup ? (uint32_t)smoGroup->m_transparencyBatchesCount : 0;
+    e->m_batchInt = smoGroup ? (uint32_t)smoGroup->m_intBatchCount : 0;
+    e->m_batchExt = smoGroup ? (uint32_t)smoGroup->m_extBatchCount : 0;
+    e->m_batchTotal = smoGroup ? (uint32_t)smoGroup->m_batchListCount : 0;
+    e->m_hasColorVerts = (smoGroup && smoGroup->m_colorVertexList) ? 1 : 0;
     snprintf(e->m_smoName, sizeof(e->m_smoName), "%s",
              (smoGroup && smoGroup->m_groupName) ? smoGroup->m_groupName : "-");
     e->m_x0 = group->m_bbox.b.x;
@@ -3312,6 +3320,59 @@ static int32_t MapBakerXrayCmp(const void* a, const void* b) {
     return MapBakerXrayLowLast ? cmp : -cmp;
 }
 
+// --- MapBaker "fill districts" pass -------------------------------------------------
+// The client renders WMO groups according to the viewer's position. Outdoors, only groups
+// whose **MOGI** flags (CMapObj::GetGroupFlags) contain 0x8 (exterior) or 0x10000
+// (always-visible) enter the cull lists: CWorldScene::AddMapObjDefGroup rejects everything
+// else. Interior districts -- Stormwind's bazaar01/thief01/entrance01/Taventrance*/...,
+// MOGI 0x2040/0x2000 -- are only drawn while the camera stands inside that WMO, via
+// CMapObjDef::RenderWithCallback -> CMapObj::RenderInterior -> RenderThruPortals ->
+// CWorldScene::AddMapObjDefGroupToSortTable, which has NO flag filter.
+//
+// A top-down bake has no such viewpoint (LocateViewer3 finds only the roof group under the
+// camera), so those districts are missing and bare terrain shows through. This pass queues
+// every group of every loaded WMO overlapping the tile through the same interior-path
+// callback, so the whole city renders. It runs before the draw loop, with the normal depth
+// test, i.e. still below the 2D minimap art overlay (composited after readback).
+static void MapBakerAddMissingGroupsToSortTable() {
+    const float half = 266.66666f;   // kAdtSize / 2 (533.3333)
+    const float cx = CWorldScene::s_activeWorldView.x;
+    const float cy = CWorldScene::s_activeWorldView.y;
+
+    for (CMapObjDef* def = CMap::mapObjDefHash.m_fulllist.Head(); def;
+            def = CMap::mapObjDefHash.m_fulllist.Next(def)) {
+        if (!def->m_owner || !def->m_owner->m_isGroupLoaded) {
+            continue;
+        }
+        const CAaBox& db = def->m_bbox;
+        if (db.t.x < cx - half || db.b.x > cx + half ||
+                db.t.y < cy - half || db.b.y > cy + half) {
+            continue;
+        }
+        const uint32_t count = (def->m_defGroups.m_count == 0xFFFFFFFF)
+                ? def->m_defGroups.m_dynamic.m_count : def->m_defGroups.m_count;
+        for (uint32_t i = 0; i < count && i < 512; i++) {
+            CMapObjDefGroup* defGroup = def->m_defGroups[i];
+            if (!defGroup || defGroup->m_sortTableLink.m_next) {
+                continue;   // already queued by the normal cull pass
+            }
+            const CAaBox& gb = defGroup->m_bbox;
+            if (gb.t.x < cx - half || gb.b.x > cx + half ||
+                    gb.t.y < cy - half || gb.b.y > cy + half) {
+                continue;
+            }
+            CMapObjGroup* group = def->m_owner->GetGroup(defGroup->m_groupNum, 0);
+            if (!group || (group->m_flags & 0x40000) || !group->m_batchListCount) {
+                continue;   // skybox, or no geometry
+            }
+            // Interior fog flag only (AddMapObjDefGroupToSortTable reads this).
+            s_curGroupIsInterior = (group->m_flags >> 15) & 1;
+            CWorldScene::AddMapObjDefGroupToSortTable(i, def);
+        }
+    }
+    s_curGroupIsInterior = 0;
+}
+
 // VERIFY: a040cfec manual (MapBaker: x-ray gating added)
 // OFFSET: 0x007964A0
 void CWorldScene::RenderMapObjDefGroups() {
@@ -3319,6 +3380,11 @@ void CWorldScene::RenderMapObjDefGroups() {
     CWorldScene::frustumIndex++;
     CWorldScene::frustumStack[CWorldScene::frustumIndex] = CWorldScene::frustumStack[CWorldScene::frustumIndex - 1];
     CShadowCache::SetShadowMapGenericGlobal();
+
+    // MapBaker: queue the WMO groups the viewpoint-driven cull skipped (city districts).
+    if (MapBakerQuadFill && !MapBakerQuadCollect && (CWorld::enables & Enable_MapObjs)) {
+        MapBakerAddMissingGroupsToSortTable();
+    }
 
     const bool xrayOn = (MapBakerXrayMode != 0);
     const bool xrayZSort = (MapBakerXrayMode == 2);

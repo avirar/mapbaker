@@ -65,6 +65,7 @@ uint32_t MapBakerQuadCap = 8192;
 uint8_t MapBakerQuadCollect = 0;
 uint8_t MapBakerQuadOn = 0;
 uint8_t MapBakerQuadWmoUnder = 0;
+uint8_t MapBakerQuadFill = 1;
 uint8_t MapBakerQuadExtColor[3] = { 232, 224, 200 }; // warm tint (exterior)
 uint8_t MapBakerQuadIntColor[3] = { 200, 214, 236 }; // cool tint (interior)
 uint8_t MapBakerQuadAlpha = 160;
@@ -1088,6 +1089,11 @@ namespace MapBakerWorld {
     void SetQuadArt(uint8_t on, uint8_t alpha) {
         MapBakerArtOn = on ? 1 : 0;
         MapBakerArtAlpha = alpha;
+    }
+
+    // Draw the WMO groups the client's viewpoint culling skipped (interior districts).
+    void SetQuadFill(uint8_t on) {
+        MapBakerQuadFill = on ? 1 : 0;
     }
 
     // Select / deselect a single quad by table index (web UI). Out-of-range is ignored.

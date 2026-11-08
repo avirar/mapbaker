@@ -70,6 +70,9 @@ namespace MapBakerWorld {
     // fallback (see MapBakerArt.h). alpha = global multiplier on the texture alpha.
     void SetQuadArt(uint8_t on, uint8_t alpha);
 
+    // 1 = draw the WMO groups the client's viewpoint culling skipped (city districts).
+    void SetQuadFill(uint8_t on);
+
     // Per-quad selection (web UI): select/deselect one group by table index.
     void SetQuadSelected(uint32_t index, bool selected);
 

@@ -30,6 +30,7 @@ namespace MapBakerApp {
         bool quads;              // 2D WMO quad overlay (collect group footprints + composite)
         bool quadArt;            // draw the real per-cell minimap .blp art (default) vs flat tints
         bool quadWmo;            // also render the 3D WMO underneath the quads (hybrid)
+        bool quadFill;           // with the 3D WMO: also draw the groups the viewpoint cull skips
         float quadAlpha;         // quad alpha, 0..1 (default ~0.63)
         uint32_t quadSel;        // bulk selection: 0 none, 1 all, 2 exterior (default), 3 interior
         const char* quadDump;    // optional: write the collected group table to this file

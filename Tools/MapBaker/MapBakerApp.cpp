@@ -316,6 +316,7 @@ namespace {
                                           MapBakerQuadIntColor[0], MapBakerQuadIntColor[1],
                                           MapBakerQuadIntColor[2]);
             MapBakerWorld::SetQuadArt(s_config.quadArt ? 1 : 0, 255);
+            MapBakerWorld::SetQuadFill(s_config.quadFill ? 1 : 0);
             fprintf(stderr, "MapBaker: quad overlay on (%u groups, %s, wmo-under=%d alpha=%.2f sel=%s)\n",
                     MapBakerQuadCount, s_config.quadArt ? "2D minimap art" : "flat tints",
                     (int)s_config.quadWmo, s_config.quadAlpha,
@@ -331,7 +332,8 @@ namespace {
                         fprintf(f, "%u\t%s\tgrp=%d\tsmo=%s\text=%d\tsel=%d\tsmoFlags=0x%x\t"
                                 "x=[%.3f..%.3f]\ty=[%.3f..%.3f]\tz=[%.1f..%.1f]\t"
                                 "lx=[%.3f..%.3f]\tly=[%.3f..%.3f]\t"
-                                "mat=[%.5f %.5f %.5f %.5f]\tt=[%.3f %.3f]\n",
+                                "mat=[%.5f %.5f %.5f %.5f]\tt=[%.3f %.3f]\t"
+                                "mogi=0x%x\tbatches=%u/%u/%u/%u\tcv=%u\n",
                                 i, e.m_wmoName, e.m_groupNum, e.m_smoName,
                                 (e.m_smoFlags & 0x8) ? 1 : 0, e.m_selected, e.m_smoFlags,
                                 (double)e.m_x0, (double)e.m_x1,
@@ -340,7 +342,9 @@ namespace {
                                 (double)e.m_lx0, (double)e.m_lx1,
                                 (double)e.m_ly0, (double)e.m_ly1,
                                 (double)e.m_ma, (double)e.m_mb, (double)e.m_mc, (double)e.m_md,
-                                (double)e.m_mtx, (double)e.m_mty);
+                                (double)e.m_mtx, (double)e.m_mty,
+                                e.m_mogiFlags, e.m_batchTrans, e.m_batchInt, e.m_batchExt,
+                                e.m_batchTotal, e.m_hasColorVerts);
                     }
                     fclose(f);
                     fprintf(stderr, "MapBaker: quad table dumped to %s\n", s_config.quadDump);
