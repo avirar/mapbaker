@@ -59,9 +59,9 @@ int32_t MapBakerDebugTileTag = -1;
 
 // 2D WMO quad overlay (defined here; declared extern in MapBakerQuad.h, read by the
 // World.cpp render hook for collection and by MapBakerWorld::RenderTile for compositing).
-MapBakerQuadEntry MapBakerQuadTable[8192] = {};
+MapBakerQuadEntry MapBakerQuadTable[MAPBAKER_QUAD_MAX] = {};
 uint32_t MapBakerQuadCount = 0;
-uint32_t MapBakerQuadCap = 8192;
+uint32_t MapBakerQuadCap = MAPBAKER_QUAD_MAX;
 uint8_t MapBakerQuadCollect = 0;
 uint8_t MapBakerQuadOn = 0;
 uint8_t MapBakerQuadWmoUnder = 0;

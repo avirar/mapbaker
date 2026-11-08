@@ -83,8 +83,83 @@ namespace {
         SStrCopy(s_mapDirectory, arg, sizeof(s_mapDirectory));
         return true;
     }
+    // --- quad-table cache ---------------------------------------------------------
+    // The collected table depends only on the map + client data (not on resolution), so a
+    // continent-sized collection can be done once and reused by every later bake, by the
+    // serve, and by all parallel workers.
+    bool LoadQuadCache(const char* path) {
+        FILE* f = fopen(path, "rb");
+        if (!f) {
+            return false;
+        }
+        char magic[8];
+        uint32_t version = 0, count = 0, entrySize = 0;
+        bool ok = fread(magic, 1, sizeof(magic), f) == sizeof(magic) &&
+                  memcmp(magic, "MBQUAD01", 8) == 0 &&
+                  fread(&version, sizeof(version), 1, f) == 1 && version == 1 &&
+                  fread(&count, sizeof(count), 1, f) == 1 && count <= MapBakerQuadCap &&
+                  fread(&entrySize, sizeof(entrySize), 1, f) == 1 &&
+                  entrySize == sizeof(MapBakerQuadEntry) &&
+                  (count == 0 ||
+                   fread(MapBakerQuadTable, sizeof(MapBakerQuadEntry), count, f) == count);
+        fclose(f);
+        if (!ok) {
+            fprintf(stderr, "MapBaker: quad cache '%s' is unusable (version/layout mismatch)\n", path);
+            return false;
+        }
+        MapBakerQuadCount = count;
+        fprintf(stderr, "MapBaker: quad cache loaded: %u groups from %s\n", count, path);
+        return true;
+    }
+
+    bool SaveQuadCache(const char* path) {
+        FILE* f = fopen(path, "wb");
+        if (!f) {
+            fprintf(stderr, "MapBaker: could not write quad cache '%s'\n", path);
+            return false;
+        }
+        const uint32_t version = 1;
+        const uint32_t count = MapBakerQuadCount;
+        const uint32_t entrySize = sizeof(MapBakerQuadEntry);
+        bool ok = fwrite("MBQUAD01", 1, 8, f) == 8 &&
+                  fwrite(&version, sizeof(version), 1, f) == 1 &&
+                  fwrite(&count, sizeof(count), 1, f) == 1 &&
+                  fwrite(&entrySize, sizeof(entrySize), 1, f) == 1 &&
+                  (count == 0 ||
+                   fwrite(MapBakerQuadTable, sizeof(MapBakerQuadEntry), count, f) == count);
+        fclose(f);
+        if (ok) {
+            fprintf(stderr, "MapBaker: quad cache saved: %u groups to %s\n", count, path);
+        }
+        return ok;
+    }
+
     void BuildTileList() {
         s_tiles.clear();
+        if (s_config.tileListFile) {
+            // Parallel worker assignment: "tx ty" per line, '#' comments and blanks ignored.
+            FILE* f = fopen(s_config.tileListFile, "r");
+            if (!f) {
+                fprintf(stderr, "MapBaker: cannot open tile list '%s'\n", s_config.tileListFile);
+                return;
+            }
+            char line[256];
+            while (fgets(line, sizeof(line), f)) {
+                char* p = line;
+                while (*p == ' ' || *p == '\t') {
+                    p++;
+                }
+                if (*p == '#' || *p == '\r' || *p == '\n' || !*p) {
+                    continue;
+                }
+                int tx = 0, ty = 0;
+                if (sscanf(p, "%d %d", &tx, &ty) == 2) {
+                    s_tiles.push_back(Tile{tx, ty});
+                }
+            }
+            fclose(f);
+            return;
+        }
         if (s_config.allTiles) {
             // Render every valid ADT in the continent.
             for (int32_t ty = 0; ty < 64; ty++) {
@@ -109,6 +184,16 @@ namespace {
         }
         const Tile& tile = s_tiles[s_tileIndex];
         const int32_t px = s_config.px;
+        if (s_config.skipExisting) {
+            char existing[520];
+            SStrPrintf(existing, sizeof(existing), "%s\\tile_%d_%d.png", s_config.outDir, tile.tx, tile.ty);
+            FILE* f = fopen(existing, "rb");
+            if (f) {
+                fclose(f);
+                s_tileIndex++;
+                return true;   // resumed: already baked
+            }
+        }
         std::vector<uint8_t> rgb(static_cast<size_t>(px) * px * 3);
         const uint32_t start = OsGetAsyncTimeMs();
         const bool ok = MapBakerWorld::RenderTile(tile.tx, tile.ty, px, rgb.data());
@@ -307,7 +392,20 @@ namespace {
                 if (t.ty < cy0) cy0 = t.ty;
                 if (t.ty > cy1) cy1 = t.ty;
             }
-            MapBakerWorld::CollectQuads(cx0, cx1, cy0, cy1, rtSize);
+            // The table depends only on map + client data, so a cache makes repeat bakes
+            // (and every parallel worker) skip the collection entirely.
+            bool haveTable = (s_config.quadCache != nullptr &&
+                              LoadQuadCache(s_config.quadCache));
+            if (!haveTable) {
+                // Collect at a modest size: the pass only needs the render hook to visit
+                // every WMO, so a continent-sized region does not pay the full tile
+                // resolution twice.
+                const uint32_t collectPx = (rtSize > 512u) ? 512u : rtSize;
+                MapBakerWorld::CollectQuads(cx0, cx1, cy0, cy1, collectPx);
+                if (s_config.quadCache) {
+                    SaveQuadCache(s_config.quadCache);
+                }
+            }
             MapBakerWorld::SetQuadSelectionByClass(s_config.quadSel);
             MapBakerWorld::SetQuadOverlay(1, s_config.quadWmo ? 1 : 0,
                                           static_cast<uint8_t>(s_config.quadAlpha * 255.0f + 0.5f),

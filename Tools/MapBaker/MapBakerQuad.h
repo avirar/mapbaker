@@ -55,7 +55,9 @@ struct MapBakerQuadEntry {
 };
 
 // Group table (filled by the collection pass). Index == the stable id the web UI uses.
-extern MapBakerQuadEntry MapBakerQuadTable[8192];
+// 65536 entries covers a whole continent (Eastern Kingdoms: ~600 ADTs worth of WMOs).
+#define MAPBAKER_QUAD_MAX 65536
+extern MapBakerQuadEntry MapBakerQuadTable[MAPBAKER_QUAD_MAX];
 extern uint32_t MapBakerQuadCount;
 extern uint32_t MapBakerQuadCap;
 // 1 = the render hook records every visited WMO group into the table (collection pass).

@@ -3200,11 +3200,33 @@ static void MapBakerQuadCollectGroup(CMapObjDefGroup* group, const CMapObjDef* m
 // def group with a world-space bbox for every WMO group at load time). Enumerating
 // m_defGroups gives the complete set the minimap uses, including the ones this camera
 // never draws.
-static void MapBakerQuadCollectDef(CMapObjDef* mapObjDef) {
+static bool MapBakerDefAlreadyCollected(CMapObjDef* mapObjDef) {
+    // NB: dedup by INSTANCE FINGERPRINT, not by the CMapObjDef pointer. Over a long bake
+    // the client unloads/reloads WMOs and the allocator recycles CMapObjDef addresses, so a
+    // pointer match can silently skip a brand-new instance (this under-collected a whole
+    // continent: 630 groups instead of thousands). The instance identity is its WMO name
+    // plus the world translation in m_mat.
+    const char* wmo = (mapObjDef->m_owner) ? mapObjDef->m_owner->m_wmoName : nullptr;
+    if (!wmo) {
+        return false;
+    }
+    const float tx = mapObjDef->m_mat.d0;
+    const float ty = mapObjDef->m_mat.d1;
     for (uint32_t i = 0; i < MapBakerQuadCount; i++) {
-        if (MapBakerQuadTable[i].m_def == (const void*)mapObjDef) {
-            return;   // instance already enumerated
+        const MapBakerQuadEntry& e = MapBakerQuadTable[i];
+        if (fabsf(e.m_mtx - tx) > 0.5f || fabsf(e.m_mty - ty) > 0.5f) {
+            continue;   // cheap reject before the string compare
         }
+        if (!SStrCmpI(e.m_wmoName, wmo, sizeof(e.m_wmoName))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void MapBakerQuadCollectDef(CMapObjDef* mapObjDef) {
+    if (MapBakerDefAlreadyCollected(mapObjDef)) {
+        return;
     }
     const uint32_t count = (mapObjDef->m_defGroups.m_count == 0xFFFFFFFF)
             ? mapObjDef->m_defGroups.m_dynamic.m_count : mapObjDef->m_defGroups.m_count;
@@ -3380,6 +3402,19 @@ void CWorldScene::RenderMapObjDefGroups() {
     CWorldScene::frustumIndex++;
     CWorldScene::frustumStack[CWorldScene::frustumIndex] = CWorldScene::frustumStack[CWorldScene::frustumIndex - 1];
     CShadowCache::SetShadowMapGenericGlobal();
+
+    // MapBaker collection: enumerate every LOADED WMO directly. The draw-based path only
+    // visits culled groups, which under-collects badly across a continent (and the fill
+    // bbox would limit it to the current tile); walking the loaded-def list is complete
+    // for whatever the client has streamed around the camera.
+    if (MapBakerQuadCollect) {
+        for (CMapObjDef* def = CMap::mapObjDefHash.m_fulllist.Head(); def;
+                def = CMap::mapObjDefHash.m_fulllist.Next(def)) {
+            if (def->m_owner && def->m_owner->m_isGroupLoaded) {
+                MapBakerQuadCollectDef(def);
+            }
+        }
+    }
 
     // MapBaker: queue the WMO groups the viewpoint-driven cull skipped (city districts).
     if (MapBakerQuadFill && !MapBakerQuadCollect && (CWorld::enables & Enable_MapObjs)) {

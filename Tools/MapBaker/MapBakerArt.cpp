@@ -21,9 +21,21 @@ namespace {
     bool s_trsLoaded = false;
 
     std::unordered_map<std::string, MapBakerArtImage> s_cache;
+    size_t s_cacheBytes = 0;
+    // A continent's worth of distinct cells can run to hundreds of MB. Bound it: when the
+    // decoded set grows past this, drop the cache (cells are re-decoded on demand).
+    const size_t kCacheLimitBytes = 768ull * 1024ull * 1024ull;
     uint32_t s_looked = 0;
     uint32_t s_hit = 0;
     uint32_t s_missing = 0;
+
+    void ClearCache() {
+        for (auto& kv : s_cache) {
+            delete[] kv.second.m_px;
+        }
+        s_cache.clear();
+        s_cacheBytes = 0;
+    }
 
     std::string Lower(const std::string& in) {
         std::string out(in);
@@ -79,6 +91,9 @@ namespace {
             return &cached->second;
         }
 
+        if (s_cacheBytes > kCacheLimitBytes) {
+            ClearCache();
+        }
         s_looked++;
 
         // The trs keys are full minimap paths without the "World\" prefix. Try with and
@@ -149,6 +164,7 @@ namespace {
 
         if (image.m_px) {
             s_hit++;
+            s_cacheBytes += static_cast<size_t>(image.m_w) * image.m_h * 4;
         } else {
             s_missing++;
         }

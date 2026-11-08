@@ -202,6 +202,10 @@ static void Usage() {
     printf("  --quad-alpha <0-255>  quad overlay alpha (default 160; art mode uses 255)\n");
     printf("  --quad-sel <mode>   which groups apply: none | all | ext (default) | int\n");
     printf("  --quad-dump <file>  write the collected group table (i/wmo/grp/smo/ext/sel/bbox)\n");
+    printf("  --skip-existing     skip tiles whose PNG already exists (resume / parallel workers)\n");
+    printf("  --tile-list <file>  render only the \"tx ty\" lines in this file (parallel workers)\n");
+    printf("  --quad-cache <file> cache the collected WMO group table (loads instantly when it\n");
+    printf("                      exists, otherwise collects once and saves it)\n");
     printf("  --serve             interactive mode: local web tuner (settings page, live re-render)\n");
     printf("  --port <n>          HTTP port for --serve (default 8742)\n");
 }
@@ -241,6 +245,9 @@ int main(int argc, char** argv) {
     config.quadFill = true; // draw the WMO groups the viewpoint cull skips (districts)
     config.quadWmo = true;  // 3D WMO underneath the art (the comprehensive map look)
     config.quadDump = nullptr;
+    config.skipExisting = false;
+    config.tileListFile = nullptr;
+    config.quadCache = nullptr;
     config.serve = false;
     config.port = 8742;
 
@@ -361,6 +368,12 @@ int main(int argc, char** argv) {
                 fprintf(stderr, "MapBaker: --quad-sel expects none | all | ext | int\n");
                 return 1;
             }
+        } else if (!strcmp(argv[i], "--skip-existing")) {
+            config.skipExisting = true;
+        } else if (!strcmp(argv[i], "--tile-list") && i + 1 < argc) {
+            config.tileListFile = argv[++i];
+        } else if (!strcmp(argv[i], "--quad-cache") && i + 1 < argc) {
+            config.quadCache = argv[++i];
         } else if (!strcmp(argv[i], "--serve")) {
             config.serve = true;
         } else if (!strcmp(argv[i], "--port") && i + 1 < argc) {
@@ -398,8 +411,8 @@ int main(int argc, char** argv) {
     if (haveRange) {
         if (config.tx1 < config.tx0) std::swap(config.tx1, config.tx0);
         if (config.ty1 < config.ty0) std::swap(config.ty1, config.ty0);
-    } else if (!haveTile && !config.allTiles && !config.dumpTiles) {
-        fprintf(stderr, "MapBaker: specify a tile (--tx/--ty), a range (--tx0..--ty1), --all, or --dump-tiles\n");
+    } else if (!haveTile && !config.allTiles && !config.dumpTiles && !config.tileListFile) {
+        fprintf(stderr, "MapBaker: specify a tile (--tx/--ty), a range (--tx0..--ty1), --tile-list, --all, or --dump-tiles\n");
         return 1;
     }
 
