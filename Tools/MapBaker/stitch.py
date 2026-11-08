@@ -18,12 +18,13 @@ Usage:
 import argparse
 import concurrent.futures
 import os
+import shutil
 import subprocess
 import sys
 import time
 import zlib
 
-VIPS = r'C:\GIT\wowdecomp-deps\vips\vips-dev-8.18\bin\vips.exe'
+VIPS = os.environ.get('VIPS') or shutil.which('vips') or r'C:\GIT\wowdecomp-deps\vips\vips-dev-8.18\bin\vips.exe'
 
 
 def log(msg):
@@ -90,6 +91,10 @@ def main():
                     help='parallel vips arrayjoin processes for the row strips')
     ap.add_argument('--concurrency', type=int, default=max(1, os.cpu_count() or 4),
                     help='VIPS_CONCURRENCY for the big single ops (tiffsave/dzsave)')
+    ap.add_argument('--row-concurrency', type=int, default=1,
+                    help='VIPS_CONCURRENCY per parallel row strip (default 1; avoids N x N thread oversubscription)')
+    ap.add_argument('--osd', default=None,
+                    help='optional OpenSeadragon directory to copy next to viewer.html')
     args = ap.parse_args()
     vips_env = dict(os.environ)
     vips_env['VIPS_CONCURRENCY'] = str(args.concurrency)
@@ -135,8 +140,10 @@ def main():
     def build_row(job):
         ty, row_files, row_v = job
         # vips arrayjoin takes the input list as ONE space-separated argument.
+        row_env = dict(vips_env)
+        row_env['VIPS_CONCURRENCY'] = str(args.row_concurrency)
         r = subprocess.run([VIPS, 'arrayjoin', ' '.join(vp(f) for f in row_files), vp(row_v),
-                            '--across', str(n_tx)], capture_output=True, text=True, env=vips_env)
+                            '--across', str(n_tx)], capture_output=True, text=True, env=row_env)
         return ty, r.returncode, r.stderr
 
     done_rows = 0
@@ -196,6 +203,13 @@ def main():
                 .replace('@TX0@', str(args.tx0)).replace('@TY0@', str(args.ty0))
                 .replace('@PX@', str(args.px)).replace('@TITLE@', args.name))
     log('viewer: %s' % viewer)
+    if args.osd:
+        dst = os.path.join(args.out, 'openseadragon')
+        if os.path.isdir(args.osd):
+            shutil.copytree(args.osd, dst, dirs_exist_ok=True)
+            log('OpenSeadragon assets: %s' % dst)
+        else:
+            log('WARNING: --osd %s is not a directory' % args.osd)
     log('DONE')
 
 

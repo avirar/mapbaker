@@ -22,9 +22,11 @@ namespace {
 
     std::unordered_map<std::string, MapBakerArtImage> s_cache;
     size_t s_cacheBytes = 0;
-    // A continent's worth of distinct cells can run to hundreds of MB. Bound it: when the
-    // decoded set grows past this, drop the cache (cells are re-decoded on demand).
-    const size_t kCacheLimitBytes = 768ull * 1024ull * 1024ull;
+    // A continent's worth of distinct cells can run to hundreds of MB. The old 768 MB
+    // bound evicted the cache mid-mosaic (wholesale delete of m_px) and could invalidate
+    // an image pointer still in use by the current tile. 8 GB keeps a full continent
+    // resident in each baker process; the host has 128 GB and at most a few workers.
+    const size_t kCacheLimitBytes = 8ull * 1024ull * 1024ull * 1024ull;
     uint32_t s_looked = 0;
     uint32_t s_hit = 0;
     uint32_t s_missing = 0;

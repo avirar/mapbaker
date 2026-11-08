@@ -1,5 +1,6 @@
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include "Engine/Source/BlizzardCore/SFile2-Core.h"
 #include "Engine/Source/BLPFile/blp.h"
@@ -1295,6 +1296,16 @@ void TextureIncreasePriority(CTexture* texture) {
 // VERIFY: 3c936638 auto
 // OFFSET: 0x004B6CB0
 CGxTex* TextureGetGxTex(CTexture* texture, int32_t wait, CStatus* status) {
+    // Optional deterministic-texture mode for offline bakes. Opt-in only: the
+    // normal MapBaker path (and the client) keep the engine's async streaming.
+    static int s_mapBakerWaitAllTextures = -1;
+    if (s_mapBakerWaitAllTextures < 0) {
+        s_mapBakerWaitAllTextures = (getenv("MAPBAKER_WAIT_ALL_TEXTURES") != nullptr) ? 1 : 0;
+    }
+    if (s_mapBakerWaitAllTextures) {
+        wait = 1;
+    }
+
     if (!texture) {
         DebugValidate("textureptr");
         SErrSetLastError(STORM_ERROR_INVALID_PARAMETER);

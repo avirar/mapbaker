@@ -619,10 +619,18 @@ namespace {
                     continue;
                 }
 
-                const float tuMax = static_cast<float>(image->m_w) - 1.0f - 0.000001f;
-                const float tvMax = static_cast<float>(image->m_h) - 1.0f - 0.000001f;
+                // Bilinear reads t00/t10/t01/t11; keep the source texel inside the
+                // image. The previous -1-epsilon clamp still allowed u0/v0 at the last
+                // texel, so t10/t01/t11 read one past the row/image (usually benign on
+                // native allocators, a page fault under Wine, and visible as edge
+                // garbage). Clamp to the last *bilinear* source texel instead.
                 const int32_t tw = image->m_w;
+                const int32_t th = image->m_h;
+                const float tuMax = (tw > 1) ? static_cast<float>(tw - 2) : 0.0f;
+                const float tvMax = (th > 1) ? static_cast<float>(th - 2) : 0.0f;
                 const size_t rowStride = static_cast<size_t>(tw) * 4;
+                const size_t colStep = (tw > 1) ? 4 : 0;
+                const size_t rowStep = (th > 1) ? rowStride : 0;
 
                 for (int32_t py = pyT; py < pyB; py++) {
                     uint8_t* row = rgb + static_cast<size_t>(py) * size * 3;
@@ -651,9 +659,9 @@ namespace {
 
                         const uint8_t* t00 = image->m_px +
                                 static_cast<size_t>(v0) * rowStride + static_cast<size_t>(u0) * 4;
-                        const uint8_t* t10 = t00 + 4;
-                        const uint8_t* t01 = t00 + rowStride;
-                        const uint8_t* t11 = t01 + 4;
+                        const uint8_t* t10 = t00 + colStep;
+                        const uint8_t* t01 = t00 + rowStep;
+                        const uint8_t* t11 = t01 + colStep;
                         // Bilinear over the 4 texels (CImVector/BGRA byte order).
                         float texel[4];
                         for (int32_t k = 0; k < 4; k++) {

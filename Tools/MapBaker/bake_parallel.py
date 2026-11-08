@@ -21,7 +21,21 @@ import subprocess
 import sys
 import time
 
-EXE = r'C:\GIT\wowdecomp\bin\Win\MapBaker64.exe'
+EXE = os.environ.get('MAPBAKER_EXE', r'C:\GIT\wowdecomp\bin\Win\MapBaker64.exe')
+WINE = os.environ.get('MAPBAKER_WINE', 'wine')
+
+
+def to_win_path(path):
+    """Return a path the Windows MapBaker can open when driven from Linux/Wine."""
+    if not path or os.name == 'nt':
+        return path
+    if re_match_drive(path):
+        return path
+    return 'Z:' + os.path.abspath(path).replace('/', '\\')
+
+
+def re_match_drive(path):
+    return len(path) >= 2 and path[1] == ':'
 
 
 def log(msg):
@@ -43,6 +57,9 @@ def main():
     ap.add_argument('--quad-cache', default=None,
                     help='shared quad-table cache (collected once, loaded by every worker)')
     ap.add_argument('--extra', default='', help='extra MapBaker args (e.g. "--light-elev 60")')
+    ap.add_argument('--exe', default=EXE, help='MapBaker64.exe path (or MAPBAKER_EXE)')
+    ap.add_argument('--wine', default=WINE, help='Wine launcher to use on non-Windows hosts (or MAPBAKER_WINE)')
+    ap.add_argument('--no-wine', action='store_true', help='run the exe directly (Windows host)')
     ap.add_argument('--dry-run', action='store_true')
     args = ap.parse_args()
 
@@ -83,12 +100,14 @@ def main():
     t0 = time.time()
     for (w, band, tiles, list_path) in jobs:
         log_path = os.path.join(args.out, '_worker_%d.log' % w)
-        cmd = [EXE, '--client', args.client, '--map', args.map,
-               '--tile-list', list_path, '--skip-existing',
+        use_wine = (not args.no_wine) and os.name != 'nt' and args.exe.lower().endswith('.exe')
+        exe_cmd = [args.wine, to_win_path(args.exe)] if use_wine else [args.exe]
+        cmd = exe_cmd + ['--client', to_win_path(args.client), '--map', args.map,
+               '--tile-list', to_win_path(list_path), '--skip-existing',
                '--px', str(args.px), '--ssaa', str(args.ssaa),
-               '--preset', 'map', '--quads', '--out', args.out]
+               '--preset', 'map', '--quads', '--out', to_win_path(args.out)]
         if args.quad_cache:
-            cmd += ['--quad-cache', args.quad_cache]
+            cmd += ['--quad-cache', to_win_path(args.quad_cache)]
         if args.extra:
             cmd += args.extra.split()
         logf = open(log_path, 'w')
@@ -97,7 +116,14 @@ def main():
 
     running = []
     for (w, cmd, logf, log_path, band) in procs:
-        p = subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT)
+        child_env = dict(os.environ)
+        child_env.setdefault('WINEPREFIX', '/media/storage/wineprefixes/mapbaker')
+        child_env.setdefault('DISPLAY', ':99')
+        child_env.setdefault('WINEDLLOVERRIDES', 'd3d9,dxgi=n')
+        child_env.setdefault('WINEDEBUG', '-all')
+        child_env.setdefault('DXVK_LOG_LEVEL', 'error')
+        child_env.setdefault('DXVK_STATE_CACHE', '0')
+        p = subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT, env=child_env)
         running.append((w, p, logf, log_path, band))
 
     bad = 0
