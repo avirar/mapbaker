@@ -129,13 +129,23 @@ void Liquid::CMaterialWater::Render(Liquid::IEnvironment* environment, Liquid::I
     CGxTex* texture1 = settings->GetTexture(0, settings->GetInt(1));
 
     if (!texture1) {
+        if (getenv("MAPBAKER_DEBUG_LIQUID")) {
+            fprintf(stderr, "MapBaker liq: water textures EMPTY (tex1 null)\n");
+        }
         return;
     }
 
     CGxTex* texture0 = settings->GetTexture(1, 1250);
 
     if (!texture0) {
+        if (getenv("MAPBAKER_DEBUG_LIQUID")) {
+            fprintf(stderr, "MapBaker liq: water textures EMPTY (tex0 null)\n");
+        }
         return;
+    }
+
+    if (getenv("MAPBAKER_DEBUG_LIQUID")) {
+        fprintf(stderr, "MapBaker liq: water render t0=%p t1=%p\n", (void*)texture0, (void*)texture1);
     }
 
     float scale1 = settings->GetFloat(0);
@@ -196,6 +206,11 @@ void Liquid::CMaterialWater::Render(Liquid::IEnvironment* environment, Liquid::I
     batch.m_minIndex = 0;
     batch.m_maxIndex = 0;
     geomFactory->GetBuffers(GxVBF_PNCT2, &vertexBuf, &indexBuf, &batch);
+    if (getenv("MAPBAKER_DEBUG_LIQUID")) {
+        fprintf(stderr, "MapBaker liq: water SPEC draw vb=%p ib=%p prim=%d count=%u maxIdx=%u\n",
+                (void*)vertexBuf, (void*)indexBuf, (int)batch.m_primType,
+                batch.m_count, batch.m_maxIndex);
+    }
     GxPrimVertexPtr(vertexBuf, GxVBF_PNCT2);
     g_theGxDevicePtr->PrimIndexPtr(indexBuf);
     g_theGxDevicePtr->Draw(&batch, 1);
@@ -208,12 +223,19 @@ void Liquid::CMaterialWaterNoSpec::Render(Liquid::IEnvironment* environment, Liq
     CGxTex* texture1 = settings->GetTexture(0, settings->GetInt(1));
 
     if (!texture1) {
+        if (getenv("MAPBAKER_DEBUG_LIQUID")) {
+            fprintf(stderr, "MapBaker liq: NoSpec tex1 NULL (t0? %p)\n",
+                    (void*)settings->GetTexture(1, 1250));
+        }
         return;
     }
 
     CGxTex* texture0 = settings->GetTexture(1, 1250);
 
     if (!texture0) {
+        if (getenv("MAPBAKER_DEBUG_LIQUID")) {
+            fprintf(stderr, "MapBaker liq: NoSpec tex0 NULL (t1=%p)\n", (void*)texture1);
+        }
         return;
     }
 
@@ -275,6 +297,11 @@ void Liquid::CMaterialWaterNoSpec::Render(Liquid::IEnvironment* environment, Liq
     batch.m_minIndex = 0;
     batch.m_maxIndex = 0;
     geomFactory->GetBuffers(GxVBF_PNCT2, &vertexBuf, &indexBuf, &batch);
+    if (getenv("MAPBAKER_DEBUG_LIQUID")) {
+        fprintf(stderr, "MapBaker liq: water NOSPEC draw vb=%p ib=%p prim=%d count=%u maxIdx=%u\n",
+                (void*)vertexBuf, (void*)indexBuf, (int)batch.m_primType,
+                batch.m_count, batch.m_maxIndex);
+    }
     GxPrimVertexPtr(vertexBuf, GxVBF_PNCT2);
     g_theGxDevicePtr->PrimIndexPtr(indexBuf);
     g_theGxDevicePtr->Draw(&batch, 1);

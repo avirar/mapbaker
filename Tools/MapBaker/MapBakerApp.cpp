@@ -95,8 +95,8 @@ namespace {
         char magic[8];
         uint32_t version = 0, count = 0, entrySize = 0;
         bool ok = fread(magic, 1, sizeof(magic), f) == sizeof(magic) &&
-                  memcmp(magic, "MBQUAD01", 8) == 0 &&
-                  fread(&version, sizeof(version), 1, f) == 1 && version == 1 &&
+                  memcmp(magic, "MBQUAD02", 8) == 0 &&
+                  fread(&version, sizeof(version), 1, f) == 1 && version == 2 &&
                   fread(&count, sizeof(count), 1, f) == 1 && count <= MapBakerQuadCap &&
                   fread(&entrySize, sizeof(entrySize), 1, f) == 1 &&
                   entrySize == sizeof(MapBakerQuadEntry) &&
@@ -118,10 +118,10 @@ namespace {
             fprintf(stderr, "MapBaker: could not write quad cache '%s'\n", path);
             return false;
         }
-        const uint32_t version = 1;
+        const uint32_t version = 2;
         const uint32_t count = MapBakerQuadCount;
         const uint32_t entrySize = sizeof(MapBakerQuadEntry);
-        bool ok = fwrite("MBQUAD01", 1, 8, f) == 8 &&
+        bool ok = fwrite("MBQUAD02", 1, 8, f) == 8 &&
                   fwrite(&version, sizeof(version), 1, f) == 1 &&
                   fwrite(&count, sizeof(count), 1, f) == 1 &&
                   fwrite(&entrySize, sizeof(entrySize), 1, f) == 1 &&

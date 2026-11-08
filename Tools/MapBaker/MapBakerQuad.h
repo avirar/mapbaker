@@ -27,7 +27,8 @@
 struct MapBakerQuadEntry {
     /* 0000 */ const void* m_def;      // CMapObjDef* (dedup key together with m_groupNum)
     /* 0008 */ int32_t m_groupNum;     // SMO group number within the WMO
-    /* 000C */ char m_wmoName[64];     // WMO file path (as stored in CMapObj::m_wmoName)
+    /* 000C */ char m_wmoName[256];    // WMO file path (as stored in CMapObj::m_wmoName;
+                                       // 256: many Azeroth building paths exceed 64 chars)
     /* 004C */ char m_smoName[40];     // SMO group name (CMapObjGroup::m_groupName)
     /* 0074 */ float m_x0, m_x1;       // group world bbox, X
     /* 007C */ float m_y0, m_y1;       // group world bbox, Y
@@ -71,6 +72,11 @@ extern uint8_t MapBakerQuadWmoUnder;
 // the viewpoint, so from a top-down camera the districts are missing and bare terrain
 // shows through. The pass runs after the normal exterior draw and below the 2D art.
 extern uint8_t MapBakerQuadFill;
+
+// 1 = liquid material textures are fetched with a blocking wait (TextureGetGxTex wait=1).
+// The liquid shaders skip a material until its animated texture set is fully loaded; an
+// offline single-pass render would otherwise draw no water on the first ~40 tile frames.
+extern int32_t MapBakerWaitTextures;
 // Flat tint per class (RGB 0-255) and a shared alpha (0-255). Exterior vs interior get
 // different colors so the user can see the classification while curating.
 extern uint8_t MapBakerQuadExtColor[3];

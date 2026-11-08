@@ -2665,6 +2665,17 @@ void CWorldScene::RenderChunksZoneDebug() {
 // VERIFY: 8ead38ba manual
 // OFFSET: 0x00793D20
 void CWorldScene::PrepareLiquidInstances() {
+    if (getenv("MAPBAKER_DEBUG_LIQUID")) {
+        uint32_t n = 0;
+        for (CMapObjDefGroup* g = CWorldScene::sortTable.m_interiorLiquidGroupList.Head(); g;
+                g = CWorldScene::sortTable.m_interiorLiquidGroupList.Next(g)) {
+            n++;
+        }
+        fprintf(stderr, "MapBaker liq: renderer=%p list=%u water=%u mapobjs=%u\n",
+                (void*)CWorldScene::s_liquidRenderer, n,
+                (unsigned)((CWorld::enables & Enable_Water) ? 1 : 0),
+                (unsigned)((CWorld::enables & Enable_MapObjs) ? 1 : 0));
+    }
     CMapObjDefGroup* group = CWorldScene::sortTable.m_interiorLiquidGroupList.Head();
 
     while (group) {
@@ -2727,6 +2738,15 @@ void CWorldScene::PrepareLiquidInstances() {
                 group->m_liquidInstance->m_geomFactory = geomFactory;
                 group->m_liquidInstance->m_transform = def->m_mat;
                 group->m_liquidInstance->m_bounds = group->m_sphere;
+                if (getenv("MAPBAKER_DEBUG_LIQUID")) {
+                    fprintf(stderr,
+                            "MapBaker liq: grp=%d type=%u typeRec=%p matRec=%p material=%p "
+                            "settings=%p env=%p geom=%p exterior=%d\n",
+                            (int)group->m_groupNum, liquidType, (void*)typeRec, (void*)materialRec,
+                            (void*)group->m_liquidInstance->m_material,
+                            (void*)group->m_liquidInstance->m_settings,
+                            (void*)environment, (void*)geomFactory, exterior);
+                }
             }
 
             CWorldScene::s_liquidRenderer->Draw(group->m_liquidInstance);
@@ -3133,8 +3153,21 @@ static void MapBakerXrayDumpWmo(CMapObjDefGroup* group, const CMapObjDef* mapObj
 static void MapBakerQuadCollectGroup(CMapObjDefGroup* group, const CMapObjDef* mapObjDef) {
     const int32_t groupNum = (int32_t)group->m_groupNum;
     const void* defKey = (const void*)mapObjDef;
+    const char* defWmo = (mapObjDef->m_owner) ? mapObjDef->m_owner->m_wmoName : nullptr;
+    const float defX = mapObjDef->m_mat.d0;
+    const float defY = mapObjDef->m_mat.d1;
+    // Dedup by (instance fingerprint, group) -- NEVER by the CMapObjDef pointer alone:
+    // over a long bake the allocator recycles those addresses, which silently dropped most
+    // groups of later instances (the Northshire mine ended up with 1 of its 10 groups).
     for (uint32_t i = 0; i < MapBakerQuadCount; i++) {
-        if (MapBakerQuadTable[i].m_def == defKey && MapBakerQuadTable[i].m_groupNum == groupNum) {
+        const MapBakerQuadEntry& e = MapBakerQuadTable[i];
+        if (e.m_groupNum != groupNum) {
+            continue;
+        }
+        if (fabsf(e.m_mtx - defX) > 0.5f || fabsf(e.m_mty - defY) > 0.5f) {
+            continue;
+        }
+        if (defWmo && !SStrCmpI(e.m_wmoName, defWmo, sizeof(e.m_wmoName))) {
             return;
         }
     }
@@ -3172,13 +3205,27 @@ static void MapBakerQuadCollectGroup(CMapObjDefGroup* group, const CMapObjDef* m
     // (CMapEntity::QueryMapObjMinimap uses m_invMat for the query; RenderInsideTexture
     // applies s_indoor.m_matrix = mapObjDef->m_mat). Deriving the grid from the world
     // AABB scrambles cell indices for rotated instances -> wrong/skewed art.
-    if (smoGroup) {
+    e->m_lx0 = e->m_lx1 = e->m_ly0 = e->m_ly1 = 0.0f;
+    if (smoGroup && smoGroup->m_bbox.t.x > smoGroup->m_bbox.b.x &&
+            smoGroup->m_bbox.t.y > smoGroup->m_bbox.b.y) {
         e->m_lx0 = smoGroup->m_bbox.b.x;
         e->m_lx1 = smoGroup->m_bbox.t.x;
         e->m_ly0 = smoGroup->m_bbox.b.y;
         e->m_ly1 = smoGroup->m_bbox.t.y;
-    } else {
-        e->m_lx0 = e->m_lx1 = e->m_ly0 = e->m_ly1 = 0.0f;
+    } else if (mapObjDef->m_owner) {
+        // The group's MOGP bbox is empty when its geometry was never read. Fall back to the
+        // MOGI header bounds (always valid after the WMO header loads) so the art grid is
+        // not skipped (7 groups hit this on the continent collection).
+        CAaBox local;
+        local.b = C3Vector(0.0f, 0.0f, 0.0f);
+        local.t = C3Vector(0.0f, 0.0f, 0.0f);
+        mapObjDef->m_owner->GetGroupBounds(&local, groupNum);
+        if (local.t.x > local.b.x && local.t.y > local.b.y) {
+            e->m_lx0 = local.b.x;
+            e->m_lx1 = local.t.x;
+            e->m_ly0 = local.b.y;
+            e->m_ly1 = local.t.y;
+        }
     }
     const C44Matrix& mat = mapObjDef->m_mat;
     e->m_ma = mat.a0;   // wx += a0*lx

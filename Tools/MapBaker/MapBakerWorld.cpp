@@ -66,6 +66,7 @@ uint8_t MapBakerQuadCollect = 0;
 uint8_t MapBakerQuadOn = 0;
 uint8_t MapBakerQuadWmoUnder = 0;
 uint8_t MapBakerQuadFill = 1;
+int32_t MapBakerWaitTextures = 0;
 uint8_t MapBakerQuadExtColor[3] = { 232, 224, 200 }; // warm tint (exterior)
 uint8_t MapBakerQuadIntColor[3] = { 200, 214, 236 }; // cool tint (interior)
 uint8_t MapBakerQuadAlpha = 160;
@@ -347,7 +348,9 @@ namespace {
         World::s_m2Scene->Draw(M2PASS_0);
         CWorldScene::RenderDetailDoodads();
         World::s_m2Scene->Draw(M2PASS_2);
-        CWorldScene::RenderLiquidPass();
+        if (!getenv("MAPBAKER_SKIP_LIQUID")) {
+            CWorldScene::RenderLiquidPass();   // transparent liquids (water/slime/lava)
+        }
         World::s_m2Scene->Draw(M2PASS_1);
     }
 
@@ -676,6 +679,9 @@ namespace {
 
 namespace MapBakerWorld {
     bool LoadMap(const char* directory, int32_t mapId) {
+        // Offline render: liquid materials must not depend on async texture warm-up
+        // (the water shaders return early until the animated set is loaded).
+        MapBakerWaitTextures = 1;
         World::s_farClip = 1500.0f;
         World::s_nearClip = 0.2f;
         World::s_prevFarClip = World::s_farClip;
@@ -698,10 +704,17 @@ namespace MapBakerWorld {
             CWorld::enables &= ~Enable_Specular;
             CWorld::enables &= ~Enable_DetailDoodads;
             CWorld::enables &= ~Enable_Particulates;
+            // Liquid specular is a SEPARATE global (set at map load from CMap::enableSpecular,
+            // before this preset is applied). Left on, every water tile gets the same
+            // camera-anchored highlight -> visible per-ADT brightness seams on the ocean.
+            CMap::enableSpecular = false;
+            Liquid::SetSpecularEnabled(0);
         } else {
             CWorld::enables |= Enable_Shadow;
             CWorld::enables |= Enable_Specular;
             CWorld::enables |= Enable_DetailDoodads;
+            CMap::enableSpecular = true;
+            Liquid::SetSpecularEnabled(1);
         }
 
         ApplyFadeDistances();

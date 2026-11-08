@@ -1,4 +1,5 @@
 #include "Liquid.h"
+#include "Tools/MapBaker/MapBakerQuad.h"
 #include "Engine/Source/Base/Handle.h"
 #include "Engine/Source/Base/Status.h"
 #include "Engine/Source/Gx/CGxTexFlags.h"
@@ -45,6 +46,8 @@ void Liquid::CMaterialSettings::Destroy() {
 // VERIFY: d9c082b2 manual
 // OFFSET: 0x008A1D60
 CGxTex* Liquid::CMaterialSettings::GetTexture(uint32_t index, uint32_t period) {
+    // MapBaker: block on the async load instead of skipping until the animated set is warm.
+    const int32_t wait = MapBakerWaitTextures ? 1 : 0;
     TSGrowableArray<CTexture*>* textures = &this->m_textures[index];
     uint32_t count = textures->Count();
 
@@ -53,7 +56,7 @@ CGxTex* Liquid::CMaterialSettings::GetTexture(uint32_t index, uint32_t period) {
     }
 
     if (count == 1) {
-        return TextureGetGxTex(textures->m_data[0], 0, nullptr);
+        return TextureGetGxTex(textures->m_data[0], wait, nullptr);
     }
 
     if (!this->m_texturesReady[index]) {
@@ -86,7 +89,7 @@ CGxTex* Liquid::CMaterialSettings::GetTexture(uint32_t index, uint32_t period) {
             bool loaded = true;
 
             for (uint32_t i = 0; i < count && loaded; i++) {
-                if (!TextureGetGxTex(textures->m_data[i], 0, nullptr)) {
+                if (!TextureGetGxTex(textures->m_data[i], wait, nullptr)) {
                     loaded = false;
                 }
             }
