@@ -675,9 +675,14 @@ namespace {
                         }
                         const float f = 1.0f - a;
                         uint8_t* p = row + px * 3;
-                        p[0] = static_cast<uint8_t>(p[0] * f + texel[0] * a + 0.5f);
+                        // m_px is the engine's PIXEL_ARGB8888 output, i.e. CImVector
+                        // byte order b,g,r,a (same as the terrain readback's CImVector).
+                        // Keep the RGB destination in r,g,b order: byte 2 is red and
+                        // byte 0 is blue. Using texel[0] as red made red/orange cave
+                        // art (lava, warm tunnels) come out blue.
+                        p[0] = static_cast<uint8_t>(p[0] * f + texel[2] * a + 0.5f);
                         p[1] = static_cast<uint8_t>(p[1] * f + texel[1] * a + 0.5f);
-                        p[2] = static_cast<uint8_t>(p[2] * f + texel[2] * a + 0.5f);
+                        p[2] = static_cast<uint8_t>(p[2] * f + texel[0] * a + 0.5f);
                     }
                 }
             }
