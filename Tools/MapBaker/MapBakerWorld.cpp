@@ -1396,9 +1396,13 @@ namespace MapBakerWorld {
             MapBakerM2Filter = 2;
             CWorldScene::RenderMapObjDefGroups();
             RenderM2AndDetails(camPos, false);
-        } else if (layer == 6) {  // WMO interiors only (quad remaster experiment)
+        } else if (layer == 6) {  // WMO interiors only (quad remaster)
             MapBakerInteriorOnly = 1;
             MapBakerM2Filter = 2;
+            if (!getenv("MAPBAKER_SKIP_PORTALS") &&
+                    (CMap::bDungeon || getenv("MAPBAKER_FORCE_WMO"))) {
+                MapBakerRenderAllPortals();
+            }
             CWorldScene::RenderMapObjDefGroups();
             RenderM2AndDetails(camPos, false);
             MapBakerM2Filter = 0;
