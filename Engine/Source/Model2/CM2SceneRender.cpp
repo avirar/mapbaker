@@ -19,6 +19,7 @@
 #include "Engine/Source/Tempest/C4Vector.h"
 #include "Engine/Source/Tempest/CMath.h"
 #include "Engine/Source/Tempest/CImVector.h"
+#include "Tools/MapBaker/MapBakerQuad.h"
 
 // STATIC: 0x00A45390
 const uint32_t s_fogModes[7] = { 1, 1, 1, 2, 2, 3, 4 };
@@ -969,6 +970,36 @@ void CM2SceneRender::Draw(M2PASS pass, M2Element* elements, uint32_t* indices, u
 
     for (uint32_t i = 0; i < count; i++) {
         M2Element* element = &elements[indices[i]];
+
+        if (MapBakerM2Filter) {
+            // Filter at element granularity, but never leave an orphan particle/ribbon or
+            // half a doodad batch behind: those refer to the skipped model and can fault.
+            if (!element->m_model || !element->m_model->m_shared) {
+                if (element->m_type == 2 && element->m_count > 0) {
+                    i += element->m_count - 1;
+                }
+                continue;
+            }
+
+            const bool tree = MapBakerM2IsTree(element->m_model->m_shared->m_fileName);
+            if ((MapBakerM2Filter == 1 && !tree) || (MapBakerM2Filter == 2 && tree)) {
+                if (element->m_type == 2 && element->m_count > 0) {
+                    i += element->m_count - 1;
+                }
+                continue;
+            }
+
+            // Map layers are static art. Particle/ribbon effect planes often use additive
+            // blending with black backgrounds, which becomes opaque black in an RGBA
+            // capture; skip them entirely.
+            if (element->m_type == 3 || element->m_type == 4 || element->m_type == 5 ||
+                    MapBakerM2IsEffect(element->m_model->m_shared->m_fileName)) {
+                if (element->m_type == 4 && element->m_count > 0) {
+                    i += element->m_count - 1;
+                }
+                continue;
+            }
+        }
 
         if (element->m_type != 2 && (element->m_model->m_fFlags & 0x2000) && element->m_type != 4) {
             continue;

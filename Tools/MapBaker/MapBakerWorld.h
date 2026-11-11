@@ -112,6 +112,11 @@ namespace MapBakerWorld {
     // supersampled at the render target resolution then box-downsampled to sizePx.
     bool RenderTile(int32_t tx, int32_t ty, int32_t sizePx, uint8_t* outRgb);
 
+    // Layer output for the interactive layer viewer.
+    // layer: 0 = combined RGB (same as RenderTile), 1 = terrain RGB, 2 = WMO RGBA,
+    // 3 = trees RGBA, 4 = quads RGBA. rgba must match the layer's channel count.
+    bool RenderTileLayer(int32_t tx, int32_t ty, int32_t sizePx, uint8_t* out, bool rgba, int32_t layer);
+
     // Read-back self test: clears the render target to a known color and verifies the readback.
     bool SelfTestReadback();
 }

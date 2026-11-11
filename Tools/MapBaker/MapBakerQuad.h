@@ -77,6 +77,12 @@ extern uint8_t MapBakerQuadFill;
 // The liquid shaders skip a material until its animated texture set is fully loaded; an
 // offline single-pass render would otherwise draw no water on the first ~40 tile frames.
 extern int32_t MapBakerWaitTextures;
+// M2 layer filter: 0 = all M2, 1 = common trees only, 2 = non-tree M2 only.
+// Used by the layer bake; set before RenderM2AndDetails / CM2SceneRender::Draw.
+extern int32_t MapBakerM2Filter;
+extern uint8_t MapBakerFlatWaterLight;
+bool MapBakerM2IsTree(const char* fileName);
+bool MapBakerM2IsEffect(const char* fileName);
 // Flat tint per class (RGB 0-255) and a shared alpha (0-255). Exterior vs interior get
 // different colors so the user can see the classification while curating.
 extern uint8_t MapBakerQuadExtColor[3];

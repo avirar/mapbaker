@@ -35,6 +35,7 @@ namespace MapBakerApp {
         float xraySkipAbove;     // trick-model guard: skip gated WMOs this high above the
                                  // street AND floating above it (0 = off)
         uint32_t xrayDump;       // 1 = dump the per-WMO table at first sight
+        int32_t layer;           // 0 = combined, 1 = terrain, 2 = WMO, 3 = trees, 4 = quads
         bool quads;              // 2D WMO quad overlay (collect group footprints + composite)
         bool quadArt;            // draw the real per-cell minimap .blp art (default) vs flat tints
         bool quadWmo;            // also render the 3D WMO underneath the quads (hybrid)

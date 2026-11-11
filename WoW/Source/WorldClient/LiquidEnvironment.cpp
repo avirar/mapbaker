@@ -1,4 +1,5 @@
 #include "LiquidEnvironment.h"
+#include "Tools/MapBaker/MapBakerQuad.h"
 #include "Engine/Source/Model2/M2Light.h"
 #include "Engine/Source/Model2/M2Scene.h"
 #include "Engine/Source/Storm/H/storm.h"
@@ -74,7 +75,11 @@ void Liquid::CClientEnvironment::SelectLights(CM2Lighting* lighting) {
         lighting->AddLight(&CMap::s_mapLight->m_light);
     }
 
-    World::s_m2Scene->SelectLights(lighting);
+    // Map preset: water must be lit by the flat sun only. M2 scene lights are zone
+    // lights; summing them makes neighbouring ADTs render different water colours.
+    if (!MapBakerFlatWaterLight) {
+        World::s_m2Scene->SelectLights(lighting);
+    }
 }
 
 // VERIFY: 8ab34ec9 auto

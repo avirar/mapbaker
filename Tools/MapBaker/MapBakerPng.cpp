@@ -48,19 +48,20 @@ namespace {
 }
 
 namespace MapBakerPng {
-    bool Write(const char* path, int32_t width, int32_t height, const uint8_t* rgb) {
-        if (width <= 0 || height <= 0 || !rgb) {
+    static bool WritePng(const char* path, int32_t width, int32_t height,
+                         const uint8_t* pixels, int32_t channels) {
+        if (width <= 0 || height <= 0 || !pixels || (channels != 3 && channels != 4)) {
             return false;
         }
 
-        uint32_t stride = static_cast<uint32_t>(width) * 3;
+        uint32_t stride = static_cast<uint32_t>(width) * static_cast<uint32_t>(channels);
 
         // Build the filtered scanlines: each row is preceded by a filter byte of 0 (None).
         std::vector<uint8_t> raw;
         raw.reserve(static_cast<size_t>(height) * (1 + stride));
         for (int32_t y = 0; y < height; y++) {
             raw.push_back(0x00);
-            const uint8_t* row = rgb + static_cast<size_t>(y) * stride;
+            const uint8_t* row = pixels + static_cast<size_t>(y) * stride;
             raw.insert(raw.end(), row, row + stride);
         }
 
@@ -78,12 +79,13 @@ namespace MapBakerPng {
         static const uint8_t signature[8] = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
         png.insert(png.end(), signature, signature + 8);
 
-        // IHDR: width, height, bit depth 8, color type 2 (RGB), compression 0, filter 0, interlace 0.
+        // IHDR: width, height, bit depth 8, color type 2 (RGB) or 6 (RGBA), compression 0,
+        // filter 0, interlace 0.
         std::vector<uint8_t> ihdr;
         PutU32(ihdr, static_cast<uint32_t>(width));
         PutU32(ihdr, static_cast<uint32_t>(height));
         ihdr.push_back(8);
-        ihdr.push_back(2);
+        ihdr.push_back(channels == 4 ? 6 : 2);
         ihdr.push_back(0);
         ihdr.push_back(0);
         ihdr.push_back(0);
@@ -121,5 +123,13 @@ namespace MapBakerPng {
         }
 
         return true;
+    }
+
+    bool Write(const char* path, int32_t width, int32_t height, const uint8_t* rgb) {
+        return WritePng(path, width, height, rgb, 3);
+    }
+
+    bool WriteRgba(const char* path, int32_t width, int32_t height, const uint8_t* rgba) {
+        return WritePng(path, width, height, rgba, 4);
     }
 }

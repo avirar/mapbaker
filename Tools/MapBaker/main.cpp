@@ -171,6 +171,7 @@ static void Usage() {
     printf("  --client <path>     client data root (default: exe directory)\n");
     printf("  --map <dir|id>      map directory name or numeric id (required)\n");
     printf("  --preset <name>     map (default) | realistic\n");
+    printf("  --layer <name>      combined (default) | terrain | wmo | trees | quads\n");
     printf("  --px <n>            tile resolution in pixels (default 1024)\n");
     printf("  --ssaa <n>          supersampling factor (default 2)\n");
     printf("  --out <dir>         output directory for PNG tiles (default: exe dir)\n");
@@ -232,6 +233,7 @@ int main(int argc, char** argv) {
 
     MapBakerApp::Config config;
     memset(&config, 0, sizeof(config));
+    config.layer = 0;
     config.px = 1024;
     config.ssaa = 2;
     config.lightElev = -1.0f;
@@ -278,6 +280,17 @@ int main(int argc, char** argv) {
             clientArg = argv[++i];
         } else if (!strcmp(argv[i], "--map") && i + 1 < argc) {
             config.mapArg = argv[++i];
+        } else if (!strcmp(argv[i], "--layer") && i + 1 < argc) {
+            const char* layer = argv[++i];
+            if (!strcmp(layer, "combined")) config.layer = 0;
+            else if (!strcmp(layer, "terrain")) config.layer = 1;
+            else if (!strcmp(layer, "wmo")) config.layer = 2;
+            else if (!strcmp(layer, "trees")) config.layer = 3;
+            else if (!strcmp(layer, "quads")) config.layer = 4;
+            else {
+                fprintf(stderr, "MapBaker: --layer expects combined | terrain | wmo | trees | quads\n");
+                return 1;
+            }
         } else if (!strcmp(argv[i], "--preset") && i + 1 < argc) {
             config.preset = argv[++i];
         } else if (!strcmp(argv[i], "--px") && i + 1 < argc) {

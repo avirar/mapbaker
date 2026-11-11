@@ -36,8 +36,8 @@ def vp(path):
     return os.path.abspath(path).replace('\\', '/')
 
 
-def write_solid_png(path, size, rgb):
-    """Minimal RGB PNG writer for the background tile (no PIL)."""
+def write_solid_png(path, size, rgb, alpha=False):
+    """Minimal RGB/RGBA PNG writer for the background tile (no PIL)."""
     raw = bytearray()
     row = bytes(rgb) * size
     for _ in range(size):
@@ -54,7 +54,7 @@ def write_solid_png(path, size, rgb):
         return bytes(c)
 
     png = b'\x89PNG\r\n\x1a\n'
-    ihdr = size.to_bytes(4, 'big') + size.to_bytes(4, 'big') + bytes([8, 2, 0, 0, 0])
+    ihdr = size.to_bytes(4, 'big') + size.to_bytes(4, 'big') + bytes([8, 6 if alpha else 2, 0, 0, 0])
     png += chunk(b'IHDR', ihdr)
     png += chunk(b'IDAT', zlib.compress(bytes(raw), 6))
     png += chunk(b'IEND', b'')
@@ -102,6 +102,8 @@ def main():
                     help='BigTIFF compression (default: deflate)')
     ap.add_argument('--tiff-level', type=int, default=None,
                     help='deflate 1-9 or zstd 1-22 compression level')
+    ap.add_argument('--alpha', action='store_true',
+                    help='RGBA layer mode: transparent background and PNG DZI tiles')
     args = ap.parse_args()
     vips_env = dict(os.environ)
     vips_env['VIPS_CONCURRENCY'] = str(args.concurrency)
@@ -109,10 +111,14 @@ def main():
     os.makedirs(args.out, exist_ok=True)
     work = args.work if args.work else args.out
     os.makedirs(work, exist_ok=True)
-    bg_rgb = tuple(int(args.background[i:i + 2], 16) for i in (0, 2, 4))
+    if args.alpha:
+        bg_rgb = (0, 0, 0, 0)
+    else:
+        bg_rgb = tuple(int(args.background[i:i + 2], 16) for i in (0, 2, 4))
     empty = os.path.join(work, '_empty.png')
-    write_solid_png(empty, args.px, bg_rgb)
-    log('background tile %s (%dx%d #%s)' % (empty, args.px, args.px, args.background))
+    write_solid_png(empty, args.px, bg_rgb, alpha=args.alpha)
+    log('background tile %s (%dx%d %s)' %
+        (empty, args.px, args.px, 'transparent' if args.alpha else '#' + args.background))
 
     n_tx = args.tx1 - args.tx0 + 1
     n_ty = args.ty1 - args.ty0 + 1
@@ -165,7 +171,7 @@ def main():
             log('row %d/%d done' % (done_rows, len(row_jobs)))
 
     mosaic = os.path.join(work, '%s-mosaic.v' % args.name)
-    log('assembling mosaic (%.2f GB) ...' % (W * H * 3 / 1e9))
+    log('assembling mosaic (%.2f GB) ...' % (W * H * (4 if args.alpha else 3) / 1e9))
     r = subprocess.run([VIPS, 'arrayjoin', ' '.join(vp(r) for r in rows), vp(mosaic),
                         '--across', '1'], capture_output=True, text=True, env=vips_env)
     if r.returncode != 0:
@@ -193,16 +199,17 @@ def main():
     # which scrambles every standard XYZ viewer at zoom; DZI is unambiguous.
     dzi = os.path.join(args.out, args.name)
     log('writing DZI pyramid ...')
+    tile_suffix = '.png' if args.alpha else '.jpg[Q=90]'
     r = subprocess.run([VIPS, 'dzsave', vp(mosaic), vp(dzi),
                         '--layout', 'dz', '--tile-size', '512', '--overlap', '1',
-                        '--suffix', '.jpg[Q=90]'],
+                        '--suffix', tile_suffix],
                        capture_output=True, text=True, env=vips_env)
     if r.returncode != 0:
         log('dzsave failed: %s' % r.stderr[-500:])
         sys.exit(1)
     log('DZI pyramid: %s.dzi + %s_files/' % (dzi, dzi))
 
-    preview = os.path.join(args.out, '%s-preview.jpg' % args.name)
+    preview = os.path.join(args.out, '%s-preview.%s' % (args.name, 'png' if args.alpha else 'jpg'))
     subprocess.run([VIPS, 'thumbnail', vp(mosaic), vp(preview), '2048', '--height', '2048'],
                    capture_output=True, text=True, env=vips_env)
     log('preview: %s' % preview)

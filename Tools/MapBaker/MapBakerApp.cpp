@@ -194,15 +194,21 @@ namespace {
                 return true;   // resumed: already baked
             }
         }
-        std::vector<uint8_t> rgb(static_cast<size_t>(px) * px * 3);
+        const bool rgba = (s_config.layer == 2 || s_config.layer == 3 || s_config.layer == 4);
+        const int32_t channels = rgba ? 4 : 3;
+        std::vector<uint8_t> pixels(static_cast<size_t>(px) * px * channels);
         const uint32_t start = OsGetAsyncTimeMs();
-        const bool ok = MapBakerWorld::RenderTile(tile.tx, tile.ty, px, rgb.data());
+        const bool ok = (s_config.layer == 0)
+                ? MapBakerWorld::RenderTile(tile.tx, tile.ty, px, pixels.data())
+                : MapBakerWorld::RenderTileLayer(tile.tx, tile.ty, px, pixels.data(), rgba, s_config.layer);
         const uint32_t ms = OsGetAsyncTimeMs() - start;
         char name[64];
         SStrPrintf(name, sizeof(name), "tile_%d_%d.png", tile.tx, tile.ty);
         char path[520];
         SStrPrintf(path, sizeof(path), "%s\\%s", s_config.outDir, name);
-        if (ok && MapBakerPng::Write(path, px, px, rgb.data())) {
+        const bool wrote = rgba ? MapBakerPng::WriteRgba(path, px, px, pixels.data())
+                                : MapBakerPng::Write(path, px, px, pixels.data());
+        if (ok && wrote) {
             printf("MapBaker: tile (%d, %d) -> %s (%u ms)\n", tile.tx, tile.ty, name, ms);
         } else {
             fprintf(stderr, "MapBaker: failed to render/write tile (%d, %d)\n", tile.tx, tile.ty);
@@ -386,6 +392,10 @@ namespace {
         // the World.cpp render hook, then the selected groups are composited as flat
         // footprints over each tile (see MapBakerQuad.h). The collection re-renders the
         // region (pixels discarded), so expect roughly 2x the render time with --quads.
+        if (s_config.layer == 4) {
+            s_config.quads = true;
+            s_config.quadArt = true;
+        }
         if (s_config.quads) {
             int32_t cx0 = 64, cx1 = -1, cy0 = 64, cy1 = -1;
             for (const Tile& t : s_tiles) {

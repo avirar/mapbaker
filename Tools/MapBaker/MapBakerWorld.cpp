@@ -4,10 +4,13 @@
 #include "MapBakerQuad.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <set>
+#include <string>
 #include <vector>
 
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
@@ -66,7 +69,113 @@ uint8_t MapBakerQuadCollect = 0;
 uint8_t MapBakerQuadOn = 0;
 uint8_t MapBakerQuadWmoUnder = 0;
 uint8_t MapBakerQuadFill = 1;
+uint8_t MapBakerFlatWaterLight = 0;
 int32_t MapBakerWaitTextures = 0;
+int32_t MapBakerM2Filter = 0;
+
+// Transient effect models (portals, fog, light rays) are excluded from map layers: in an
+// RGBA capture their additive black backgrounds become opaque black planes.
+bool MapBakerM2IsEffect(const char* fileName) {
+    if (!fileName || !fileName[0]) {
+        return false;
+    }
+
+    const char* base = fileName;
+    for (const char* p = fileName; *p; p++) {
+        if (*p == '\\' || *p == '/') {
+            base = p + 1;
+        }
+    }
+
+    char lower[260];
+    size_t i = 0;
+    for (; base[i] && i + 1 < sizeof(lower); i++) {
+        lower[i] = static_cast<char>(tolower(static_cast<unsigned char>(base[i])));
+    }
+    lower[i] = '\0';
+
+    // Transient spell/portal/fog effects: additive planes that turn into opaque black
+    // holes in a transparent RGBA layer. Map layers should contain static art only.
+    static const char* effects[] = {
+        "castingcircle", "lightray", "spirits", "fog", "energyfall", "energyfalls",
+        "mageportal", "portal", "fx", "particle", "smoke", "spark", "glow", "beam",
+        "void", "effect", "vfx"
+    };
+    for (size_t e = 0; e < sizeof(effects) / sizeof(effects[0]); e++) {
+        if (strstr(lower, effects[e])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// "Common" tree models for the trees layer. World/unique trees are denied so they stay
+// with the WMO/props layer (or are handled by the WMO toggle).
+bool MapBakerM2IsTree(const char* fileName) {
+    if (!fileName || !fileName[0]) {
+        return false;
+    }
+
+    // Use the model basename, not the whole path: directory names such as "trees"
+    // and zone names such as Silverpine would otherwise classify bushes, logs,
+    // rocks and docks as trees.
+    const char* base = fileName;
+    for (const char* p = fileName; *p; p++) {
+        if (*p == '\\' || *p == '/') {
+            base = p + 1;
+        }
+    }
+
+    char lower[260];
+    size_t i = 0;
+    for (; base[i] && i + 1 < sizeof(lower); i++) {
+        lower[i] = static_cast<char>(tolower(static_cast<unsigned char>(base[i])));
+    }
+    lower[i] = '\0';
+
+    static const char* deny[] = {
+        "worldtree", "world_tree", "teldrassil", "nordrassil", "vordrassil",
+        "ghanir", "treeoflife", "tree_of_life", "ancient", "guardian",
+        "bush", "log", "mushroom", "trunk", "stump", "sapling", "spine",
+        "rock", "coral", "banner", "hut", "lamp", "vfx", "fallen",
+        "fruit", "root", "branch", "vine", "crop", "grass", "flower", "bridge",
+        "clover", "shrub"
+    };
+    for (size_t d = 0; d < sizeof(deny) / sizeof(deny[0]); d++) {
+        if (strstr(lower, deny[d])) {
+            return false;
+        }
+    }
+
+    // Most Warcraft tree models carry "tree" in the basename.
+    if (strstr(lower, "tree")) {
+        return true;
+    }
+
+    // Species-only names (pine01, oak02, ...). Match whole alphanumeric tokens so
+    // "silverpinedocks" / "spine" / "fire" / "helmet" do not match.
+    static const char* species[] = {
+        "pine", "fir", "spruce", "oak", "birch", "elm", "willow", "cedar",
+        "aspen", "poplar", "cypress", "conifer", "maple", "redwood",
+        "eucalyptus", "larch", "hemlock", "sycamore", "beech", "alder",
+        "juniper", "sequoia", "yew"
+    };
+    const char* p = lower;
+    while (*p) {
+        while (*p && !isalnum(static_cast<unsigned char>(*p))) p++;
+        const char* t0 = p;
+        while (*p && isalnum(static_cast<unsigned char>(*p))) p++;
+        const size_t n = static_cast<size_t>(p - t0);
+        for (size_t k = 0; k < sizeof(species) / sizeof(species[0]); k++) {
+            if (strlen(species[k]) == n && strncmp(t0, species[k], n) == 0) {
+                return true;
+            }
+        }
+    }
+
+    // A few palm-family names use a compound token (sholazarpalm_*).
+    return strstr(lower, "palm") != nullptr;
+}
 uint8_t MapBakerQuadExtColor[3] = { 232, 224, 200 }; // warm tint (exterior)
 uint8_t MapBakerQuadIntColor[3] = { 200, 214, 236 }; // cool tint (interior)
 uint8_t MapBakerQuadAlpha = 160;
@@ -261,6 +370,10 @@ namespace {
     }
 
     void ApplyWaterColorMode() {
+        // The map palette must not pick up per-zone M2 scene lights; the water material
+        // otherwise sums them into the sun ambient/diffuse and shows ADT-shaped seams.
+        MapBakerFlatWaterLight = (s_waterMode == 1) ? 1 : 0;
+
         if (s_waterMode == 0) {
             return; // client Light.dbc water bands
         }
@@ -307,6 +420,16 @@ namespace {
             info->m_bands.m_waterColors[1] = deep;    // ocean deep
             info->m_bands.m_waterColors[2] = shallow; // river/lake shallow
             info->m_bands.m_waterColors[3] = deep;    // river/lake deep
+
+            // The depth texture blends shallow->deep alpha, and the alpha bands are
+            // per-zone/per-liquid-type. Even with identical colours that changes how much
+            // of the lakebed shows through, producing ADT-shaped brightness steps (e.g.
+            // ocean 25,26 next to lake-type water 26,26). Make water fully opaque so the
+            // map ocean is one flat colour everywhere.
+            info->m_bands.m_oceanShallowAlpha = 1.0f;
+            info->m_bands.m_oceanDeepAlpha = 1.0f;
+            info->m_bands.m_waterShallowAlpha = 1.0f;
+            info->m_bands.m_waterDeepAlpha = 1.0f;
         } else {
             float amount = s_lightDesat;
             if (amount <= 0.0f) {
@@ -453,7 +576,8 @@ namespace {
         ApplyWaterColorMode();
     }
 
-    void RenderWorld() {
+    void PrepareScene() {
+
         CWorldScene::nDoodadsRendered = 0;
         CWorldScene::s_chunksRendered = 0;
 
@@ -504,6 +628,10 @@ namespace {
         CWorldScene::CullMapObjDefGroup();
         CWorldScene::sortTable.m_pendingExteriorGroupList.UnlinkAll();
 
+    }
+
+    void RenderWorld() {
+        PrepareScene();
         DayNight::DNInfo* info = DayNight::GetInfo();
 
         // MapBaker: the sky is disabled for a top-down map, so the background clear must be the
@@ -549,7 +677,7 @@ namespace {
         }
     }
 
-    void RenderM2AndDetails(const C3Vector& camPos) {
+    void RenderM2AndDetails(const C3Vector& camPos, bool liquids = true) {
         if (!World::s_m2Scene) {
             return;
         }
@@ -559,10 +687,24 @@ namespace {
 
         World::s_m2Scene->AdvanceTime(0);
         World::s_m2Scene->Animate(camPos);
+        if (getenv("MAPBAKER_DEBUG_M2")) {
+            static std::set<std::string> seen;
+            const uint32_t count = World::s_m2Scene->m_elements.Count();
+            for (uint32_t i = 0; i < count; i++) {
+                const M2Element& e = World::s_m2Scene->m_elements.m_data[i];
+                if (e.m_model && e.m_model->m_shared) {
+                    const char* name = e.m_model->m_shared->m_fileName;
+                    if (seen.insert(name).second) {
+                        fprintf(stderr, "MapBaker m2: type=%d count=%u model=%s tree=%d\n", e.m_type, e.m_count, name, MapBakerM2IsTree(name) ? 1 : 0);
+                    }
+                }
+            }
+        }
+
         World::s_m2Scene->Draw(M2PASS_0);
         CWorldScene::RenderDetailDoodads();
         World::s_m2Scene->Draw(M2PASS_2);
-        if (!getenv("MAPBAKER_SKIP_LIQUID")) {
+        if (liquids && !getenv("MAPBAKER_SKIP_LIQUID")) {
             CWorldScene::RenderLiquidPass();   // transparent liquids (water/slime/lava)
         }
         World::s_m2Scene->Draw(M2PASS_1);
@@ -620,6 +762,61 @@ namespace {
         }
     }
 
+    // Box-filter downsample of an RGBA buffer. Alpha is averaged premultiplied, then
+    // unpremultiplied, so transparent edges do not darken when the layer is composited.
+    void BoxDownsampleRgba(const uint8_t* src, int32_t srcW, int32_t srcH, uint8_t* dst, int32_t dstW, int32_t dstH) {
+        if (srcW == dstW && srcH == dstH) {
+            memcpy(dst, src, static_cast<size_t>(srcW) * srcH * 4);
+            return;
+        }
+
+        for (int32_t dy = 0; dy < dstH; dy++) {
+            const float fy0 = static_cast<float>(dy) * srcH / dstH;
+            const float fy1 = static_cast<float>(dy + 1) * srcH / dstH;
+            int32_t sy0 = static_cast<int32_t>(fy0);
+            int32_t sy1 = static_cast<int32_t>(fy1);
+            if (sy1 <= sy0) sy1 = sy0 + 1;
+            if (sy0 < 0) sy0 = 0;
+            if (sy1 > srcH) sy1 = srcH;
+
+            for (int32_t dx = 0; dx < dstW; dx++) {
+                const float fx0 = static_cast<float>(dx) * srcW / dstW;
+                const float fx1 = static_cast<float>(dx + 1) * srcW / dstW;
+                int32_t sx0 = static_cast<int32_t>(fx0);
+                int32_t sx1 = static_cast<int32_t>(fx1);
+                if (sx1 <= sx0) sx1 = sx0 + 1;
+                if (sx0 < 0) sx0 = 0;
+                if (sx1 > srcW) sx1 = srcW;
+
+                float r = 0.0f, g = 0.0f, b = 0.0f, a = 0.0f;
+                int32_t n = 0;
+                for (int32_t sy = sy0; sy < sy1; sy++) {
+                    const uint8_t* row = src + static_cast<size_t>(sy) * srcW * 4;
+                    for (int32_t sx = sx0; sx < sx1; sx++) {
+                        const uint8_t* p = row + static_cast<size_t>(sx) * 4;
+                        const float pa = p[3] / 255.0f;
+                        r += p[0] * pa;
+                        g += p[1] * pa;
+                        b += p[2] * pa;
+                        a += pa;
+                        n++;
+                    }
+                }
+
+                uint8_t* out = dst + static_cast<size_t>(dy) * dstW * 4 + static_cast<size_t>(dx) * 4;
+                if (n > 0 && a > 0.0f) {
+                    const float inv = 1.0f / a;
+                    out[0] = static_cast<uint8_t>(r * inv + 0.5f);
+                    out[1] = static_cast<uint8_t>(g * inv + 0.5f);
+                    out[2] = static_cast<uint8_t>(b * inv + 0.5f);
+                    out[3] = static_cast<uint8_t>((a / n) * 255.0f + 0.5f);
+                } else {
+                    out[0] = out[1] = out[2] = out[3] = 0;
+                }
+            }
+        }
+    }
+
     // Read the full render target into an RGB buffer (size x size, row 0 = north).
     bool ReadRtToRgb(uint8_t* rgb, uint32_t size) {
         TSGrowableArray<CImVector> pixels;
@@ -640,6 +837,32 @@ namespace {
             rgb[i * 3 + 0] = src[i].r;
             rgb[i * 3 + 1] = src[i].g;
             rgb[i * 3 + 2] = src[i].b;
+        }
+
+        return true;
+    }
+
+    // Read the full render target into an RGBA buffer (row 0 = north).
+    bool ReadRtToRgba(uint8_t* rgba, uint32_t size) {
+        TSGrowableArray<CImVector> pixels;
+        CiRect rect;
+        rect.minX = 0;
+        rect.minY = 0;
+        rect.maxX = static_cast<int32_t>(size);
+        rect.maxY = static_cast<int32_t>(size);
+
+        GxReadRenderTarget(s_rt, rect, pixels);
+
+        if (pixels.Count() != static_cast<uint32_t>(size) * size) {
+            return false;
+        }
+
+        const CImVector* src = pixels.Ptr();
+        for (uint32_t i = 0; i < static_cast<uint32_t>(size) * size; i++) {
+            rgba[i * 4 + 0] = src[i].r;
+            rgba[i * 4 + 1] = src[i].g;
+            rgba[i * 4 + 2] = src[i].b;
+            rgba[i * 4 + 3] = src[i].a;
         }
 
         return true;
@@ -734,7 +957,7 @@ namespace {
     // UV (CGMinimapFrame::RenderInsideQuad): across a cell's own bounds, u runs with local
     // +X (0 at minX) and v with local -Y (1 at minY, 0 at maxY). The instance rotation then
     // produces wowmin's verified world-space result automatically.
-    void CompositeArt(uint8_t* rgb, uint32_t size, float centerX, float centerY) {
+    void CompositeArt(uint8_t* pixels, uint32_t size, float centerX, float centerY, bool rgba) {
         if (!MapBakerQuadOn || !MapBakerArtOn || MapBakerQuadCount == 0) {
             return;
         }
@@ -847,7 +1070,7 @@ namespace {
                 const size_t rowStep = (th > 1) ? rowStride : 0;
 
                 for (int32_t py = pyT; py < pyB; py++) {
-                    uint8_t* row = rgb + static_cast<size_t>(py) * size * 3;
+                    uint8_t* row = pixels + static_cast<size_t>(py) * size * (rgba ? 4 : 3);
                     const float dy = static_cast<float>(py) + 0.5f - t1;
                     for (int32_t px = pxL; px < pxR; px++) {
                         // Screen -> local (inverse affine), then the cell's own UV mapping:
@@ -887,16 +1110,30 @@ namespace {
                         if (a <= 0.0f) {
                             continue;
                         }
-                        const float f = 1.0f - a;
-                        uint8_t* p = row + px * 3;
+                        uint8_t* p = row + px * (rgba ? 4 : 3);
                         // m_px is the engine's PIXEL_ARGB8888 output, i.e. CImVector
                         // byte order b,g,r,a (same as the terrain readback's CImVector).
                         // Keep the RGB destination in r,g,b order: byte 2 is red and
                         // byte 0 is blue. Using texel[0] as red made red/orange cave
                         // art (lava, warm tunnels) come out blue.
-                        p[0] = static_cast<uint8_t>(p[0] * f + texel[2] * a + 0.5f);
-                        p[1] = static_cast<uint8_t>(p[1] * f + texel[1] * a + 0.5f);
-                        p[2] = static_cast<uint8_t>(p[2] * f + texel[0] * a + 0.5f);
+                        if (rgba) {
+                            // Source-over onto a transparent layer, straight RGB.
+                            const float dstA = p[3] / 255.0f;
+                            const float outA = a + dstA * (1.0f - a);
+                            if (outA <= 0.0f) {
+                                continue;
+                            }
+                            const float inv = 1.0f / outA;
+                            p[0] = static_cast<uint8_t>((texel[2] * a + p[0] * dstA * (1.0f - a)) * inv + 0.5f);
+                            p[1] = static_cast<uint8_t>((texel[1] * a + p[1] * dstA * (1.0f - a)) * inv + 0.5f);
+                            p[2] = static_cast<uint8_t>((texel[0] * a + p[2] * dstA * (1.0f - a)) * inv + 0.5f);
+                            p[3] = static_cast<uint8_t>(outA * 255.0f + 0.5f);
+                        } else {
+                            const float f = 1.0f - a;
+                            p[0] = static_cast<uint8_t>(p[0] * f + texel[2] * a + 0.5f);
+                            p[1] = static_cast<uint8_t>(p[1] * f + texel[1] * a + 0.5f);
+                            p[2] = static_cast<uint8_t>(p[2] * f + texel[0] * a + 0.5f);
+                        }
                     }
                 }
             }
@@ -1101,13 +1338,77 @@ namespace MapBakerWorld {
         }
     }
 
-    bool RenderTile(int32_t tx, int32_t ty, int32_t sizePx, uint8_t* outRgb) {
+    // Terrain base layer: opaque terrain + liquid (the map floor), no WMO/M2/quads.
+    void RenderTerrainLayer() {
+        PrepareScene();
+        CImVector clear;
+        clear.b = 0x5d;   // #1d3b5d map background
+        clear.g = 0x3b;
+        clear.r = 0x1d;
+        clear.a = 0xFF;
+        g_theGxDevicePtr->SceneClear(3, clear);
+
+        CWorldScene::ApplyFogState();
+        CWorldScene::RenderChunks();
+
+        Liquid::UpdateProceduralTextures();
+        CWorldScene::PrepareLiquidInstances();
+        if ((CWorld::enables & Enable_Water) && CWorldScene::s_liquidRenderer && !getenv("MAPBAKER_SKIP_LIQUID")) {
+            // ADT water lives in the transparent list (settings->m_transparent != 0), so the
+            // base terrain layer must flush both passes; the combined renderer does this via
+            // RenderLiquidPass() after WMO/M2.
+            CWorldScene::s_liquidRenderer->Flush(CWorldScene::s_activeWorldView, 0);
+            CWorldScene::s_liquidRenderer->Flush(CWorldScene::s_activeWorldView, 1);
+        }
+    }
+
+    // Transparent 3D overlay. Terrain is rendered depth-only first so WMO/trees behind
+    // hills are correctly occluded; the color pass then draws only the requested layer.
+    void RenderOverlayLayer(const C3Vector& camPos, int32_t layer, uint8_t background) {
+        PrepareScene();
+        CImVector clear;
+        clear.b = background;
+        clear.g = background;
+        clear.r = background;
+        clear.a = 0;   // native alpha capture needs a transparent clear
+        g_theGxDevicePtr->SceneClear(3, clear);
+
+        GxRsSet(GxRs_ColorWrite, 0);
+        CWorldScene::RenderChunks();
+        GxRsSet(GxRs_ColorWrite, 15);
+        // NOTE: WMO depth is intentionally not used for the trees layer. A full WMO
+        // depth pass over-occludes trees across the tile (interior floors/ceilings
+        // write depth above the canopy). Terrain depth alone gives a usable trees
+        // layer; WMO ordering is handled by the viewer.
+
+        if (layer == 2) {  // WMO + non-tree M2 props
+            MapBakerM2Filter = 2;
+            CWorldScene::RenderMapObjDefGroups();
+            RenderM2AndDetails(camPos, false);
+        } else {  // common trees only
+            MapBakerM2Filter = 1;
+            RenderM2AndDetails(camPos, false);
+        }
+        MapBakerM2Filter = 0;
+    }
+
+    bool RenderTileInternal(int32_t tx, int32_t ty, int32_t sizePx, uint8_t* out, bool rgba, int32_t layer) {
         if (!s_rt || sizePx <= 0) {
             return false;
         }
 
         float centerX = 0.0f, centerY = 0.0f;
         TileWorldCenter(tx, ty, &centerX, &centerY);
+
+        // Quads-only layer: 2D minimap art on a transparent background. No 3D pass.
+        if (layer == 4) {
+            const uint32_t n = s_rtSize;
+            std::vector<uint8_t> full(static_cast<size_t>(n) * n * 4, 0);
+            CompositeArt(full.data(), n, centerX, centerY, true);
+            BoxDownsampleRgba(full.data(), static_cast<int32_t>(n), static_cast<int32_t>(n),
+                              out, sizePx, sizePx);
+            return true;
+        }
 
         // Terrain height at the center for the camera altitude.
         float terrainH = 0.0f;
@@ -1214,8 +1515,34 @@ namespace MapBakerWorld {
         CShaderEffect::UpdateProjMatrix();
 
         MapBakerDebugTileTag = ty * 64 + tx;
-        RenderWorld();
-        RenderM2AndDetails(camPos);
+        // Optional diagnostic capture: render the WMO overlay over black and white and
+        // solve per-pixel coverage from the difference. Off by default (effect models are
+        // filtered instead); enable with MAPBAKER_WMO_MATTE. The native alpha path is used
+        // for trees because their wind animation would smear the two captures.
+        const bool matteSolve = rgba && layer == 2 && getenv("MAPBAKER_WMO_MATTE");
+        std::vector<uint8_t> matteBlack;
+        std::vector<uint8_t> matteWhite;
+        bool matteReadOk = true;
+        if (layer == 1) {
+            RenderTerrainLayer();
+        } else if (layer == 2 || layer == 3) {
+            RenderOverlayLayer(camPos, layer, 0);
+            if (matteSolve) {
+                matteBlack.resize(static_cast<size_t>(s_rtSize) * s_rtSize * 3);
+                matteReadOk = ReadRtToRgb(matteBlack.data(), s_rtSize);
+                if (matteReadOk) {
+                    // The first WMO pass drains the exterior group list. Re-run the world
+                    // update so the second pass's cull sees the same loaded groups.
+                    UpdateWorld(camPos, camTarget, tx, ty);
+                    RenderOverlayLayer(camPos, layer, 255);
+                    matteWhite.resize(static_cast<size_t>(s_rtSize) * s_rtSize * 3);
+                    matteReadOk = ReadRtToRgb(matteWhite.data(), s_rtSize);
+                }
+            }
+        } else {
+            RenderWorld();
+            RenderM2AndDetails(camPos);
+        }
 
         g_theGxDevicePtr->RsPop();
 
@@ -1231,15 +1558,47 @@ namespace MapBakerWorld {
         g_theGxDevicePtr->DeviceSetRenderTarget(GxBuffers_Color, oldTarget, 0);
 
         // Read back at full resolution, then box-downsample to the requested size.
-        std::vector<uint8_t> full(static_cast<size_t>(s_rtSize) * s_rtSize * 3);
-        if (!ReadRtToRgb(full.data(), s_rtSize)) {
+        const int32_t channels = rgba ? 4 : 3;
+        std::vector<uint8_t> full(static_cast<size_t>(s_rtSize) * s_rtSize * channels);
+        bool readOk = matteReadOk;
+        if (matteSolve) {
+            if (readOk) {
+                const size_t count = static_cast<size_t>(s_rtSize) * s_rtSize;
+                for (size_t i = 0; i < count; i++) {
+                    const int32_t dr = static_cast<int32_t>(matteWhite[i * 3 + 0]) - matteBlack[i * 3 + 0];
+                    const int32_t dg = static_cast<int32_t>(matteWhite[i * 3 + 1]) - matteBlack[i * 3 + 1];
+                    const int32_t db = static_cast<int32_t>(matteWhite[i * 3 + 2]) - matteBlack[i * 3 + 2];
+                    int32_t alpha = 255 - (dr + dg + db) / 3;
+                    if (alpha < 0) alpha = 0;
+                    if (alpha > 255) alpha = 255;
+                    if (alpha <= 1) {
+                        full[i * 4 + 0] = 0;
+                        full[i * 4 + 1] = 0;
+                        full[i * 4 + 2] = 0;
+                        full[i * 4 + 3] = 0;
+                    } else {
+                        // The black matte capture is premultiplied; recover straight colour.
+                        const uint32_t inv = (255u * 255u) / static_cast<uint32_t>(alpha);
+                        for (int32_t c = 0; c < 3; c++) {
+                            const uint32_t v = static_cast<uint32_t>(matteBlack[i * 3 + c]) * inv / 255u;
+                            full[i * 4 + c] = static_cast<uint8_t>(v > 255u ? 255u : v);
+                        }
+                        full[i * 4 + 3] = static_cast<uint8_t>(alpha);
+                    }
+                }
+            }
+        } else {
+            readOk = rgba ? ReadRtToRgba(full.data(), s_rtSize)
+                          : ReadRtToRgb(full.data(), s_rtSize);
+        }
+        if (!readOk) {
             fprintf(stderr, "MapBaker: readback failed for tile (%d, %d)\n", tx, ty);
             return false;
         }
 
         // MapBaker diagnostic (MAPBAKER_DEBUG_VIEW=1): 16x16 grid of full-res RT block means
         // (raw, before the row-0 fix), to see WHERE the pixels differ between modes.
-        if (getenv("MAPBAKER_DEBUG_VIEW")) {
+        if (!rgba && getenv("MAPBAKER_DEBUG_VIEW")) {
             const uint32_t g = 16;
             const uint32_t bw = s_rtSize / g, bh = s_rtSize / g;
             for (uint32_t gy = 0; gy < g; gy++) {
@@ -1263,7 +1622,7 @@ namespace MapBakerWorld {
         }
 
         // Diagnostic: print |row[i]-row[i-1]| for the top/bottom rows of the full-res RT.
-        if (getenv("MAPBAKER_DUMP_EDGES")) {
+        if (!rgba && getenv("MAPBAKER_DUMP_EDGES")) {
             const size_t rowBytes = static_cast<size_t>(s_rtSize) * 3;
             const uint8_t* p = full.data();
             for (uint32_t i = 1; i <= 16; i++) {
@@ -1290,7 +1649,7 @@ namespace MapBakerWorld {
         // The true boundary value is best approximated by the adjacent row, so copy row 1 over the
         // corrupted row 0. Applied per-tile, this removes the horizontal seam at every ADT boundary.
         {
-            const size_t rowBytes = static_cast<size_t>(s_rtSize) * 3;
+            const size_t rowBytes = static_cast<size_t>(s_rtSize) * channels;
             memcpy(full.data(), full.data() + rowBytes, rowBytes); // row 0 := row 1
         }
 
@@ -1301,16 +1660,16 @@ namespace MapBakerWorld {
         // --px 2048 --ssaa 1 on tile 571/42,16: RT col 0 is ~(86,179,212), col 1 is ~(27,51,79).
         // Copy column 1 over column 0 at full RT resolution so the downsample pair is clean.
         {
-            const size_t rowBytes = static_cast<size_t>(s_rtSize) * 3;
+            const size_t rowBytes = static_cast<size_t>(s_rtSize) * channels;
             for (uint32_t y = 0; y < s_rtSize; y++) {
                 uint8_t* row = full.data() + static_cast<size_t>(y) * rowBytes;
-                memcpy(row, row + 3, 3); // column 0 := column 1
+                memcpy(row, row + channels, channels); // column 0 := column 1
             }
         }
 
         // Report coverage (share of pixels that differ from the horizon/fog clear color). A
         // value near 0% means the tile rendered as empty fog; a healthy terrain tile is high.
-        {
+        if (!rgba) {
             const uint8_t fr = DayNight::GetInfo()->m_fog.m_color.r;
             const uint8_t fg = DayNight::GetInfo()->m_fog.m_color.g;
             const uint8_t fb = DayNight::GetInfo()->m_fog.m_color.b;
@@ -1331,9 +1690,10 @@ namespace MapBakerWorld {
         if (s_gain != 1.0f) {
             const uint32_t n = s_rtSize * s_rtSize;
             for (uint32_t i = 0; i < n; i++) {
-                full[i * 3 + 0] = static_cast<uint8_t>(std::min(255.0f, full[i * 3 + 0] * s_gain));
-                full[i * 3 + 1] = static_cast<uint8_t>(std::min(255.0f, full[i * 3 + 1] * s_gain));
-                full[i * 3 + 2] = static_cast<uint8_t>(std::min(255.0f, full[i * 3 + 2] * s_gain));
+                uint8_t* p = full.data() + static_cast<size_t>(i) * channels;
+                p[0] = static_cast<uint8_t>(std::min(255.0f, p[0] * s_gain));
+                p[1] = static_cast<uint8_t>(std::min(255.0f, p[1] * s_gain));
+                p[2] = static_cast<uint8_t>(std::min(255.0f, p[2] * s_gain));
             }
         }
 
@@ -1342,14 +1702,21 @@ namespace MapBakerWorld {
         // anti-aliases the edges. Art mode draws the real per-cell minimap .blp textures;
         // tint mode draws the flat per-class rectangles (diagnostic fallback).
         // No-op unless MapBakerQuadOn and the table is populated.
-        if (MapBakerArtOn) {
-            CompositeArt(full.data(), s_rtSize, centerX, centerY);
-        } else {
-            CompositeQuads(full.data(), s_rtSize, centerX, centerY);
+        if (layer == 0) {
+            if (MapBakerArtOn) {
+                CompositeArt(full.data(), s_rtSize, centerX, centerY, false);
+            } else {
+                CompositeQuads(full.data(), s_rtSize, centerX, centerY);
+            }
         }
 
-        BoxDownsampleRgb(full.data(), static_cast<int32_t>(s_rtSize), static_cast<int32_t>(s_rtSize),
-                         outRgb, sizePx, sizePx);
+        if (rgba) {
+            BoxDownsampleRgba(full.data(), static_cast<int32_t>(s_rtSize), static_cast<int32_t>(s_rtSize),
+                              out, sizePx, sizePx);
+        } else {
+            BoxDownsampleRgb(full.data(), static_cast<int32_t>(s_rtSize), static_cast<int32_t>(s_rtSize),
+                             out, sizePx, sizePx);
+        }
         return true;
     }
 
@@ -1465,5 +1832,13 @@ namespace MapBakerWorld {
         }
 
         return true;
+    }
+
+    bool RenderTile(int32_t tx, int32_t ty, int32_t sizePx, uint8_t* outRgb) {
+        return RenderTileInternal(tx, ty, sizePx, outRgb, false, 0);
+    }
+
+    bool RenderTileLayer(int32_t tx, int32_t ty, int32_t sizePx, uint8_t* out, bool rgba, int32_t layer) {
+        return RenderTileInternal(tx, ty, sizePx, out, rgba, layer);
     }
 }
