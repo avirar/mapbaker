@@ -3411,6 +3411,7 @@ static int32_t MapBakerXrayCmp(const void* a, const void* b) {
 // callback, so the whole city renders. It runs before the draw loop, with the normal depth
 // test, i.e. still below the 2D minimap art overlay (composited after readback).
 static void MapBakerAddMissingGroupsToSortTable() {
+    const bool forceWmo = CMap::bDungeon || getenv("MAPBAKER_FORCE_WMO");
     const float half = 266.66666f;   // kAdtSize / 2 (533.3333)
     const float cx = CWorldScene::s_activeWorldView.x;
     const float cy = CWorldScene::s_activeWorldView.y;
@@ -3421,8 +3422,9 @@ static void MapBakerAddMissingGroupsToSortTable() {
             continue;
         }
         const CAaBox& db = def->m_bbox;
-        if (db.t.x < cx - half || db.b.x > cx + half ||
-                db.t.y < cy - half || db.b.y > cy + half) {
+        if (!forceWmo &&
+                (db.t.x < cx - half || db.b.x > cx + half ||
+                 db.t.y < cy - half || db.b.y > cy + half)) {
             continue;
         }
         const uint32_t count = (def->m_defGroups.m_count == 0xFFFFFFFF)
@@ -3433,13 +3435,14 @@ static void MapBakerAddMissingGroupsToSortTable() {
                 continue;   // already queued by the normal cull pass
             }
             const CAaBox& gb = defGroup->m_bbox;
-            if (gb.t.x < cx - half || gb.b.x > cx + half ||
-                    gb.t.y < cy - half || gb.b.y > cy + half) {
+            if (!forceWmo &&
+                    (gb.t.x < cx - half || gb.b.x > cx + half ||
+                     gb.t.y < cy - half || gb.b.y > cy + half)) {
                 continue;
             }
             CMapObjGroup* group = def->m_owner->GetGroup(defGroup->m_groupNum, 0);
-            if (!group || (group->m_flags & 0x40000) || !group->m_batchListCount) {
-                continue;   // skybox, or no geometry
+            if (!group || ((group->m_flags & 0x40000) && !forceWmo) || !group->m_batchListCount) {
+                continue;   // open-world skybox, or no geometry
             }
             // Interior fog flag only (AddMapObjDefGroupToSortTable reads this).
             s_curGroupIsInterior = (group->m_flags >> 15) & 1;

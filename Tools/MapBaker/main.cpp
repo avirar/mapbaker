@@ -180,6 +180,7 @@ static void Usage() {
     printf("  --all               render the whole continent\n");
     printf("  --dump-tiles        dump the ADT grid (from the WDT area table), then exit\n");
     printf("  --no-wmo            skip WMO/building rendering (ground-floor look)\n");
+    printf("  --force-wmo         force-load all WMO groups (instances with ADT terrain)\n");
     printf("  --light-elev <deg>  map-light elevation above horizon (default: engine noon ~37)\n");
     printf("  --light-mode <m>    light: client | neutral | desat | flat\n");
     printf("                      neutral = desaturated zone light; flat = neutral + fixed intensity\n");
@@ -325,6 +326,8 @@ int main(int argc, char** argv) {
             config.dumpTiles = true;
         } else if (!strcmp(argv[i], "--no-wmo")) {
             config.noWmo = true;
+        } else if (!strcmp(argv[i], "--force-wmo")) {
+            config.forceWmo = true;
         } else if (!strcmp(argv[i], "--light-elev") && i + 1 < argc) {
             config.lightElev = static_cast<float>(strtod(argv[++i], nullptr));
         } else if (!strcmp(argv[i], "--light-mode") && i + 1 < argc) {

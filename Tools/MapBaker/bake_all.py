@@ -99,6 +99,9 @@ class Baker:
                '--preset', 'map', '--light-elev', '60',
                '--layer', layer,
                '--out', to_win_path(tdir)]
+        if self.mid not in CONTINENTS:
+            # ADT-based instances still have WMO wings outside the normal AOI.
+            cmd.append('--force-wmo')
         if layer == 'quads':
             cmd += ['--quad-cache',
                     to_win_path(os.path.join(self.root, '%s.quadcache' % self.slug))]

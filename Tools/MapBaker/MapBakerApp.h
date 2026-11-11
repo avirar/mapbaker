@@ -43,6 +43,7 @@ namespace MapBakerApp {
         float quadAlpha;         // quad alpha, 0..1 (default ~0.63)
         uint32_t quadSel;        // bulk selection: 0 none, 1 all, 2 exterior (default), 3 interior
         const char* quadDump;    // optional: write the collected group table to this file
+        bool forceWmo;           // force-load all WMO groups (instances with ADT terrain)
         bool skipExisting;       // skip tiles whose PNG already exists (resume / parallel workers)
         const char* tileListFile; // optional text file of "tx ty" lines (parallel worker assignment)
         const char* quadCache;   // optional quad-table cache: load if present, else save after collect

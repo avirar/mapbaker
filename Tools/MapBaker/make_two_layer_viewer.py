@@ -48,11 +48,21 @@ HTML = r'''<!doctype html>
     padding:7px 10px; border-radius:5px; pointer-events:none; white-space:pre; }
   #hud b { color:#9fd0ff; font-weight:600; }
   #err { color:#ff8b8b; font-size:11px; margin-top:6px; white-space:pre-wrap; }
+  #cross { position:fixed; z-index:9; pointer-events:none; display:none; width:0; height:0; }
+  #cross:before, #cross:after { content:""; position:absolute; background:#fff;
+    box-shadow:0 0 0 1px rgba(0,0,0,.85), 0 0 4px rgba(0,0,0,.6); }
+  #cross:before { left:-15px; top:-1px; width:31px; height:2px; }
+  #cross:after { left:-1px; top:-15px; width:2px; height:31px; }
+  #copy { width:100%; margin-top:7px; padding:6px 8px; border-radius:5px;
+    border:1px solid #2a4157; background:#0f1d2a; color:#9fd0ff; cursor:pointer;
+    font:12px inherit; }
+  #copy:hover { border-color:#3d6285; background:#123a5c; }
 </style>
 </head>
 <body>
 <div id="checker"></div>
 <div id="osd"></div>
+<div id="cross"></div>
 <div id="panel">
   <h1>@TITLE@</h1>
   <div class="sub">@PX@ px/ADT · @COUNT@ tiles · map @MAPID@</div>
@@ -68,7 +78,8 @@ HTML = r'''<!doctype html>
     <output id="qopacityv">100%</output>
   </div>
   <button class="reset" id="reset">Reset layers</button>
-  <div class="hint">Scene off shows the checkerboard.<br>Quads are drawn above the scene.</div>
+  <button id="copy">Copy coords</button>
+  <div class="hint">Hover the map for pixel coordinates.<br>Scene off shows the checkerboard.<br>Quads are drawn above the scene.</div>
   <div id="err"></div>
 </div>
 <div id="hud">loading…</div>
@@ -136,22 +147,65 @@ function initOSD(){
     });
   });
   const hud=document.getElementById('hud');
-  function update(){
-    if (!viewer) return;
+  const cross=document.getElementById('cross');
+  let lastCoords=null, hovering=false;
+  function coordsAt(ix,iy){
+    const tx=TX0+Math.floor(ix/PX), ty=TY0+Math.floor(iy/PX);
+    const wy=O-(TX0+ix/PX)*A, wx=O-(TY0+iy/PX)*A;
+    return {ix:ix,iy:iy,tx:tx,ty:ty,wx:wx,wy:wy};
+  }
+  function hudText(c){
+    return '<b>map '+MAPID+'</b>  ADT <b>('+c.tx+', '+c.ty+')</b>\n'+
+      'world <b>'+c.wx.toFixed(1)+', '+c.wy.toFixed(1)+'</b>\n'+
+      'image '+c.ix.toFixed(0)+', '+c.iy.toFixed(0)+' px   zoom '+
+      (viewer.viewport.getZoom(true)*100).toFixed(0)+'%';
+  }
+  function sample(pos){
+    const img=viewer.world.getItemAt(0); if (!img) return;
+    const vp=viewer.viewport.pointFromPixel(pos);
+    const p=img.viewportToImageCoordinates(vp);
+    lastCoords=coordsAt(p.x,p.y);
+    cross.style.left=pos.x+'px'; cross.style.top=pos.y+'px';
+    cross.style.display='block';
+    hud.innerHTML=hudText(lastCoords);
+  }
+  function updateCenter(){
+    if (!viewer || hovering) return;
     const img=viewer.world.getItemAt(0); if (!img) return;
     const c=viewer.viewport.getCenter(true);
     const p=img.viewportToImageCoordinates(c);
-    const ix=p.x, iy=p.y;
-    const tx=TX0+Math.floor(ix/PX), ty=TY0+Math.floor(iy/PX);
-    const wy=O-(TX0+ix/PX)*A, wx=O-(TY0+iy/PX)*A;
-    hud.innerHTML='<b>map '+MAPID+'</b>  ADT <b>('+tx+', '+ty+')</b>\n'+
-      'world <b>'+wx.toFixed(1)+', '+wy.toFixed(1)+'</b>\n'+
-      'image '+ix.toFixed(0)+', '+iy.toFixed(0)+' px   zoom '+
-      (viewer.viewport.getZoom(true)*100).toFixed(0)+'%';
+    lastCoords=coordsAt(p.x,p.y);
+    hud.innerHTML=hudText(lastCoords);
   }
-  viewer.addHandler('open',update);
-  ['animation','animation-finish','resize','zoom','pan','canvas-scroll'].forEach(e=>viewer.addHandler(e,update));
+  viewer.addHandler('open',updateCenter);
+  viewer.addHandler('canvas-move',ev=>{ hovering=true; sample(ev.position); });
+  viewer.addHandler('canvas-leave',()=>{ hovering=false; cross.style.display='none'; });
+  ['animation','animation-finish','resize','zoom','pan','canvas-scroll'].forEach(e=>viewer.addHandler(e,updateCenter));
   window.addEventListener('keydown',e=>{ if(e.key==='f'||e.key==='F') viewer.viewport.goHome(); });
+
+  function copyText(text){
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).catch(()=>fallbackCopy(text));
+    } else {
+      fallbackCopy(text);
+    }
+  }
+  function fallbackCopy(text){
+    const ta=document.createElement('textarea');
+    ta.value=text; ta.style.position='fixed'; ta.style.left='-9999px';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch(e) {}
+    ta.remove();
+  }
+  document.getElementById('copy').addEventListener('click',()=>{
+    const c=lastCoords;
+    const txt=c ? ('Map '+MAPID+' | ADT ('+c.tx+', '+c.ty+') | world '+
+      c.wx.toFixed(1)+', '+c.wy.toFixed(1)+' | image '+
+      c.ix.toFixed(0)+', '+c.iy.toFixed(0)+' px') : ('Map '+MAPID);
+    copyText(txt);
+    const b=document.getElementById('copy');
+    b.textContent='Copied'; setTimeout(()=>{ b.textContent='Copy coords'; },1200);
+  });
 
   document.querySelectorAll('.toggle').forEach(b=>{
     b.addEventListener('click',()=>setVisible(b.dataset.layer,!state.visible[b.dataset.layer]));

@@ -250,6 +250,9 @@ namespace {
             EventPostClose();
             return 1;
         }
+        if (s_config.forceWmo) {
+            _putenv_s("MAPBAKER_FORCE_WMO", "1");
+        }
         BaseInitializeContext();
         TextureInitialize();
         ScrnInitialize(0);

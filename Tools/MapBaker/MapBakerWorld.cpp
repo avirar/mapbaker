@@ -467,7 +467,10 @@ namespace {
         World::s_currentWorldPos = camPos;
 
         // AOI boxes: the camera looks straight down, so use a generous radius in XY.
-        const float ao = World::s_farClip;
+        // Instances can span many ADTs; the normal 1500-unit AOI leaves whole WMO
+        // wings unloaded when their bboxes sit outside the current tile.
+        const bool forceWmo = CMap::bDungeon || getenv("MAPBAKER_FORCE_WMO");
+        const float ao = forceWmo ? 12000.0f : World::s_farClip;
         CWorld::s_groupAreaOfInterest.b = C3Vector(camPos.x - ao, camPos.y - ao, camPos.z - ao);
         CWorld::s_groupAreaOfInterest.t = C3Vector(camPos.x + ao, camPos.y + ao, camPos.z + ao);
         CWorld::s_objectAreaOfInterest.b = C3Vector(camPos.x - ao, camPos.y - ao, camPos.z - ao);
