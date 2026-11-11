@@ -100,6 +100,11 @@ terrain+WMO and the 2D art overlay**. Disable with `--no-quad-fill`.
   (set in `LoadMap`) makes `CMaterialSettings::GetTexture` use `TextureGetGxTex(..., wait=1)`,
   so the LiquidType/LiquidMaterial DBC-selected material (water/slime/lava) loads on the
   first tile.
+- **Terrain textures are synchronous too**: the same `MapBakerWaitTextures` flag now also
+  forces `TextureGetGxTex(..., wait=1)` for terrain/M2/WMO textures. Without it, a long
+  worker sequence can draw a chunk before its terrain BLP finishes loading, leaving whole
+  1/16-ADT chunks grey. A 128-tile 4096 repro went from 78.5% grey in the affected area to
+  0%; per-tile time was unchanged (620 → 637 ms). 1024 and 4096 deliveries use this.
 - Terrain tone varies by location **on purpose**: baked per-chunk normals (MCNR), baked
   terrain shadow maps (MCSH/MCAL) and `Light.dbc` zone lights are the client's own
   rendering. It matches the original minimap reference.
@@ -185,8 +190,12 @@ Deleting the file forces a fresh collection.
 
 Requires portable libvips (`C:\GIT\wowdecomp-deps\vips`). Steps: background-filled row
 strips (tiles missing or single-colour are replaced with `--background`) → mosaic `.v` →
-**pyramidal BigTIFF** (512-px tiles, deflate) → **DZI** pyramid (512 px, 1-px overlap) →
-preview → OpenSeadragon viewer (`viewer.html`).
+**pyramidal BigTIFF** (512-px tiles, `--tiff-compression` / `--tiff-level`) → **DZI**
+pyramid (512 px, 1-px overlap) → preview → OpenSeadragon viewer (`viewer.html`).
+
+For large 4096 stitches prefer `--tiff-compression zstd --tiff-level 1`: it is lossless,
+~6.5× faster than deflate and ~24% smaller on Northrend. Default remains deflate for
+compatibility.
 
 - **Always prefer DZI.** libvips 8.18 `dzsave --layout google` writes `{z}/{row}/{col}.jpg`
   (x/y swapped vs the XYZ spec), which scrambles every standard XYZ viewer at zoom. DZI is

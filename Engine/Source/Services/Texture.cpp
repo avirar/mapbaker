@@ -56,6 +56,11 @@ static TSExplicitList<CTexture, offsetof(CTexture, m_link)> s_textureList;
 // STATIC: 0x00AC3354
 static uint32_t s_defaultColor = 0xFF00FF00;
 
+// Defined in Tools/MapBaker/MapBakerWorld.cpp. Offline MapBaker renders set this
+// before loading the map so every texture is synchronous; without it a long worker
+// sequence can draw chunks before their terrain textures finish loading (grey patches).
+extern int32_t MapBakerWaitTextures;
+
 // STATIC: 0x00AC3358
 static TSExplicitList<CGxTexCache, offsetof(CGxTexCache, m_link)> s_gxTexCacheFree;
 
@@ -1302,7 +1307,7 @@ CGxTex* TextureGetGxTex(CTexture* texture, int32_t wait, CStatus* status) {
     if (s_mapBakerWaitAllTextures < 0) {
         s_mapBakerWaitAllTextures = (getenv("MAPBAKER_WAIT_ALL_TEXTURES") != nullptr) ? 1 : 0;
     }
-    if (s_mapBakerWaitAllTextures) {
+    if (s_mapBakerWaitAllTextures || MapBakerWaitTextures) {
         wait = 1;
     }
 

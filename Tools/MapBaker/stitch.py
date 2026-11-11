@@ -97,6 +97,11 @@ def main():
                     help='VIPS_CONCURRENCY per parallel row strip (default 1; avoids N x N thread oversubscription)')
     ap.add_argument('--osd', default=None,
                     help='optional OpenSeadragon directory to copy next to viewer.html')
+    ap.add_argument('--tiff-compression', default='deflate',
+                    choices=['deflate', 'lzw', 'zstd', 'jpeg', 'none'],
+                    help='BigTIFF compression (default: deflate)')
+    ap.add_argument('--tiff-level', type=int, default=None,
+                    help='deflate 1-9 or zstd 1-22 compression level')
     args = ap.parse_args()
     vips_env = dict(os.environ)
     vips_env['VIPS_CONCURRENCY'] = str(args.concurrency)
@@ -169,12 +174,15 @@ def main():
     log('mosaic assembled: %s' % mosaic)
 
     tif = os.path.join(args.out, '%s.tif' % args.name)
-    log('writing BigTIFF pyramid (this is the long step) ...')
-    r = subprocess.run([VIPS, 'tiffsave', vp(mosaic), vp(tif),
-                        '--tile', '--tile-width', '512', '--tile-height', '512',
-                        '--pyramid', '--bigtiff', '--compression', 'deflate',
-                        '--predictor', 'horizontal'], capture_output=True, text=True,
-                       env=vips_env)
+    log('writing BigTIFF pyramid (this is the long step, %s) ...' % args.tiff_compression)
+    tif_args = [VIPS, 'tiffsave', vp(mosaic), vp(tif),
+                '--tile', '--tile-width', '512', '--tile-height', '512',
+                '--pyramid', '--bigtiff', '--compression', args.tiff_compression]
+    if args.tiff_compression == 'deflate':
+        tif_args += ['--predictor', 'horizontal']
+    if args.tiff_level is not None:
+        tif_args += ['--level', str(args.tiff_level)]
+    r = subprocess.run(tif_args, capture_output=True, text=True, env=vips_env)
     if r.returncode != 0:
         log('tiffsave failed: %s' % r.stderr[-500:])
         sys.exit(1)
