@@ -78,6 +78,8 @@ def main():
     ap.add_argument('--tiles', required=True)
     ap.add_argument('--out', required=True)
     ap.add_argument('--name', default='map')
+    ap.add_argument('--map-id', type=int, default=0,
+                    help='map id shown in the viewer HUD (default 0)')
     ap.add_argument('--tx0', type=int, required=True)
     ap.add_argument('--tx1', type=int, required=True)
     ap.add_argument('--ty0', type=int, required=True)
@@ -201,7 +203,8 @@ def main():
     with open(viewer, 'w', encoding='utf-8') as f:
         f.write(VIEWER_HTML.replace('@NAME@', args.name)
                 .replace('@TX0@', str(args.tx0)).replace('@TY0@', str(args.ty0))
-                .replace('@PX@', str(args.px)).replace('@TITLE@', args.name))
+                .replace('@PX@', str(args.px)).replace('@TITLE@', args.name)
+                .replace('@MAPID@', str(args.map_id)))
     log('viewer: %s' % viewer)
     if args.osd:
         dst = os.path.join(args.out, 'openseadragon')
@@ -251,7 +254,7 @@ function initOSD(){
     const ix=p.x, iy=p.y;
     const tx=TX0+Math.floor(ix/PX), ty=TY0+Math.floor(iy/PX);
     const wy=O-(TX0+ix/PX)*A, wx=O-(TY0+iy/PX)*A;
-    hud.innerHTML='<b>map 0</b>  ADT <b>('+tx+', '+ty+')</b>\n'+
+    hud.innerHTML='<b>map @MAPID@</b>  ADT <b>('+tx+', '+ty+')</b>\n'+
       'world <b>'+wx.toFixed(1)+', '+wy.toFixed(1)+'</b>\n'+
       'image '+ix.toFixed(0)+', '+iy.toFixed(0)+' px   zoom '+
       (viewer.viewport.getZoom(true)*100).toFixed(0)+'%';
