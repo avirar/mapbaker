@@ -17,6 +17,10 @@ namespace MapBakerApp {
         bool dumpTiles;          // dump the ADT grid from the WDT area table, then exit
         bool noWmo;              // skip WMO/building rendering (ground-floor look)
         float lightElev;         // map-light elevation in degrees (-1 = engine default noon)
+        // 0 = client/Light.dbc colors, 1 = neutral (luminance gray), 2 = desaturate,
+        // -1 = preset default (map: neutral, realistic: client).
+        int32_t lightMode;
+        float lightDesat;        // 0..1, used by lightMode 2; neutral is 1.0
         float gain;              // post-render brightness gain (1.0 = no change)
         const char* cityFile;    // ADT list ("tx ty" per line) rendered with the city sun
         float cityElev;          // light elevation for city ADTs (-1 = use lightElev)

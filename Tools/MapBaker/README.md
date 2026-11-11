@@ -122,6 +122,9 @@ terrain+WMO and the 2D art overlay**. Disable with `--no-quad-fill`.
 | `--dump-tiles` | dump the ADT grid from the WDT area table, then exit |
 | `--no-wmo` | terrain only |
 | `--light-elev <deg>` | sun elevation above the horizon (default: engine noon ~37°); `--flat-light` = 89 |
+| `--light-mode <client\|neutral\|desat\|flat>` | terrain light **colour**: `client` keeps `Light.dbc` zone colours; `neutral` luminance-gray; `desat` uses `--light-desat`; `flat` = neutral + `--light-elev 89` if no elevation was given. `map` preset defaults to **neutral**, `realistic` to `client`; explicit flags win |
+| `--light-desat <0..1>` | partial desaturation (implies `--light-mode desat`; `1` = neutral) |
+| `--ignore-zone-light` | alias for `--light-mode neutral` |
 | `--gain <f>` | post-render brightness gain |
 | `--city-file <path>` / `--city-elev <deg>` | city ADT list + its sun elevation |
 | `--xray <off\|depthoff\|zsort\|zinv>` etc. | x-ray city-floor modes (legacy/indoor look) |
@@ -207,7 +210,11 @@ Outputs (Eastern Kingdoms example): `tiles/` (882 PNG), `ek1024.tif` (21,504 × 
   ~4,400.
 - The art cache is bounded (768 MB) and evicts wholesale when exceeded.
 - `--light-elev 60` is the tuned value for the baked minimap look; `map` preset = noon, no
-  fog/sky/weather, shadows/specular/detail doodads off.
+  fog/sky/weather, shadows/specular/detail doodads off. The `map` preset also uses neutral
+  terrain light by default: Northrend's `Light.dbc` zone records are strongly cyan and would
+  otherwise paint Borean Tundra/Dragonblight/Icecrown blue. Pass `--light-mode client` (or
+  `--light-desat <0..1>`) to restore the zone colours. Colour mode only changes ambient/
+  diffuse/specular colour; direction and elevation stay with `--light-elev`.
 
 ## Source layout
 

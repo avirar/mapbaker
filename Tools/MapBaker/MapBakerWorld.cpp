@@ -97,6 +97,11 @@ namespace {
     // above the noon angle; 90 deg is fully vertical.
     float s_lightElev = -1.0f;
 
+    // Terrain light color mode: -1 = preset default, 0 = client Light.dbc colors,
+    // 1 = neutral (luminance gray), 2 = partially desaturated by s_lightDesat.
+    int32_t s_lightMode = -1;
+    float s_lightDesat = 1.0f;
+
     // Post-render brightness gain applied to the readback (1.0 = no change). The baked
     // minimap art is brighter than a direct render; a ~1.1-1.2 gain matches its tone.
     float s_gain = 1.0f;
@@ -130,6 +135,47 @@ namespace {
         CWorldScene::s_fadeDistDefault[3] = 1e7f;
         CWorldScene::s_fadeDistDefault[4] = 1e7f;
         CWorldScene::ScaleFadeDist(1.0f);
+    }
+
+    C3Vector DesaturateLightColor(const C3Vector& color, float amount) {
+        // Luminance-preserving desaturation. C3Vector is (r,g,b) in the light
+        // structures (World.cpp packs ambient.r/g/b directly).
+        const float luma = 0.2126f * color.x + 0.7152f * color.y + 0.0722f * color.z;
+        return C3Vector(color.x + (luma - color.x) * amount,
+                        color.y + (luma - color.y) * amount,
+                        color.z + (luma - color.z) * amount);
+    }
+
+    void ApplyLightColorMode() {
+        if (s_lightMode == 0 || !CMap::s_mapLight) {
+            return; // client Light.dbc colors
+        }
+
+        float amount = s_lightMode == 1 ? 1.0f : s_lightDesat;
+        if (amount <= 0.0f) {
+            return;
+        }
+        if (amount > 1.0f) {
+            amount = 1.0f;
+        }
+
+        CM2Light& light = CMap::s_mapLight->m_light;
+        light.m_ambColor = DesaturateLightColor(light.m_ambColor, amount);
+        light.m_dirColor = DesaturateLightColor(light.m_dirColor, amount);
+        light.m_specColor = DesaturateLightColor(light.m_specColor, amount);
+
+        if (getenv("MAPBAKER_DEBUG_LIGHT")) {
+            static int s_printed = 0;
+            if (s_printed < 4) {
+                s_printed++;
+                fprintf(stderr,
+                        "MapBaker light: mode=%d amount=%.2f amb=(%.3f,%.3f,%.3f) "
+                        "dir=(%.3f,%.3f,%.3f)\n",
+                        s_lightMode, amount,
+                        light.m_ambColor.x, light.m_ambColor.y, light.m_ambColor.z,
+                        light.m_dirColor.x, light.m_dirColor.y, light.m_dirColor.z);
+            }
+        }
     }
 
     void UpdateWorld(const C3Vector& camPos, const C3Vector& camTarget, int32_t tileTx, int32_t tileTy) {
@@ -237,6 +283,12 @@ namespace {
             info->m_light0.m_dir = dir;
             info->m_light1.m_dir = dir;
         }
+
+        // Neutral/desaturated terrain lighting (map preset default). Applied after
+        // CWorldScene::Update/DayNight so it overrides the Light.dbc color cast while
+        // preserving the direction/elevation set above. The client/realistic mode is a
+        // no-op.
+        ApplyLightColorMode();
     }
 
     void RenderWorld() {
@@ -730,6 +782,13 @@ namespace MapBakerWorld {
             Liquid::SetSpecularEnabled(1);
         }
 
+        // Color-mode default: the map preset is neutral/flat like the original 2D
+        // minimap; realistic keeps the client's Light.dbc zone colors. An explicit
+        // --light-mode / --light-desat overrides this.
+        if (s_lightMode < 0) {
+            s_lightMode = (preset == Preset_Map) ? 1 : 0;
+        }
+
         ApplyFadeDistances();
     }
 
@@ -739,6 +798,17 @@ namespace MapBakerWorld {
 
     void SetLightElevation(float deg) {
         s_lightElev = deg;
+    }
+
+    void SetLightMode(int32_t mode, float amount) {
+        s_lightMode = mode;
+        if (amount < 0.0f) {
+            amount = 0.0f;
+        }
+        if (amount > 1.0f) {
+            amount = 1.0f;
+        }
+        s_lightDesat = amount;
     }
 
     void SetGain(float gain) {

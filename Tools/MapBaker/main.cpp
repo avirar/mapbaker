@@ -180,6 +180,10 @@ static void Usage() {
     printf("  --dump-tiles        dump the ADT grid (from the WDT area table), then exit\n");
     printf("  --no-wmo            skip WMO/building rendering (ground-floor look)\n");
     printf("  --light-elev <deg>  map-light elevation above horizon (default: engine noon ~37)\n");
+    printf("  --light-mode <m>    terrain light color: client | neutral | desat | flat\n");
+    printf("                      map preset default = neutral (flat white light); realistic = client\n");
+    printf("  --light-desat <f>   desaturation 0..1 (implies --light-mode desat; 1 = neutral)\n");
+    printf("  --ignore-zone-light ignore Light.dbc color cast (alias for --light-mode neutral)\n");
     printf("  --gain <f>          post-render brightness gain (default 1.0)\n");
     printf("  --flat-light        alias for --light-elev 89 (flat city-floor look)\n");
     printf("  --city-file <path>  ADT list (\"tx ty\" per line) rendered with the city sun\n");
@@ -227,6 +231,8 @@ int main(int argc, char** argv) {
     config.px = 1024;
     config.ssaa = 2;
     config.lightElev = -1.0f;
+    config.lightMode = -1;       // preset default: map = neutral, realistic = client
+    config.lightDesat = 1.0f;
     config.gain = 1.0f;
     config.cityElev = -1.0f;
     config.xrayMode = 0;
@@ -301,6 +307,32 @@ int main(int argc, char** argv) {
             config.noWmo = true;
         } else if (!strcmp(argv[i], "--light-elev") && i + 1 < argc) {
             config.lightElev = static_cast<float>(strtod(argv[++i], nullptr));
+        } else if (!strcmp(argv[i], "--light-mode") && i + 1 < argc) {
+            const char* mode = argv[++i];
+            if (!strcmp(mode, "client")) {
+                config.lightMode = 0;
+            } else if (!strcmp(mode, "neutral")) {
+                config.lightMode = 1;
+                config.lightDesat = 1.0f;
+            } else if (!strcmp(mode, "flat")) {
+                // "flat" also means neutral color; keep the direction switch explicit.
+                config.lightMode = 1;
+                config.lightDesat = 1.0f;
+                if (config.lightElev < 0.0f) {
+                    config.lightElev = 89.0f;
+                }
+            } else if (!strcmp(mode, "desat")) {
+                config.lightMode = 2;
+            } else {
+                fprintf(stderr, "MapBaker: --light-mode expects client | neutral | desat | flat\n");
+                return 1;
+            }
+        } else if (!strcmp(argv[i], "--light-desat") && i + 1 < argc) {
+            config.lightMode = 2;
+            config.lightDesat = static_cast<float>(strtod(argv[++i], nullptr));
+        } else if (!strcmp(argv[i], "--ignore-zone-light") || !strcmp(argv[i], "--neutral-light")) {
+            config.lightMode = 1;
+            config.lightDesat = 1.0f;
         } else if (!strcmp(argv[i], "--gain") && i + 1 < argc) {
             config.gain = static_cast<float>(strtod(argv[++i], nullptr));
         } else if (!strcmp(argv[i], "--flat-light")) {
@@ -401,6 +433,13 @@ int main(int argc, char** argv) {
 
     if (config.ssaa <= 0) {
         config.ssaa = 1;
+    }
+
+    if (config.lightDesat < 0.0f) {
+        config.lightDesat = 0.0f;
+    }
+    if (config.lightDesat > 1.0f) {
+        config.lightDesat = 1.0f;
     }
 
     if (config.px * config.ssaa < 8) {
