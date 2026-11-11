@@ -30,6 +30,7 @@
 #include "WoW/Source/Console/ConsoleClient.h"
 #include "WoW/Source/DB/DBClient/DBClient.h"
 #include "WoW/Source/WorldClient/Map.h"
+#include "WoW/Source/WorldClient/MapObjDef.h"
 #include "WoW/Source/WorldClient/World.h"
 #include "WoW/Source/WorldClient/WorldParam.h"
 #include "WoW/Source/WorldClient/shadow.h"
@@ -194,7 +195,8 @@ namespace {
                 return true;   // resumed: already baked
             }
         }
-        const bool rgba = (s_config.layer == 2 || s_config.layer == 3 || s_config.layer == 4);
+        const bool rgba = (s_config.layer == 2 || s_config.layer == 3 ||
+                           s_config.layer == 4 || s_config.layer == 6);
         const int32_t channels = rgba ? 4 : 3;
         std::vector<uint8_t> pixels(static_cast<size_t>(px) * px * channels);
         const uint32_t start = OsGetAsyncTimeMs();
@@ -311,6 +313,7 @@ namespace {
         if (s_config.dumpTiles) {
             // Dump the ADT grid from the WDT area table and exit (no rendering needed).
             int32_t count = 0, txMin = 64, txMax = -1, tyMin = 64, tyMax = -1;
+            bool globalWmoGrid = false;
             for (int32_t ty = 0; ty < 64; ty++) {
                 for (int32_t tx = 0; tx < 64; tx++) {
                     if (CMap::m_areaInfo[64 * ty + tx].m_flags & 1) {
@@ -322,13 +325,61 @@ namespace {
                     }
                 }
             }
+
+            // Instances are global-WMO maps: their WDT has no ADT area table, so the
+            // loop above finds nothing. Derive the covered tile rectangle from the
+            // bounds of the WMO definitions instead.
+            if (count == 0) {
+                float minX = 1.0e30f, maxX = -1.0e30f;
+                float minY = 1.0e30f, maxY = -1.0e30f;
+                int32_t defs = 0;
+                for (CMapObjDef* def = CMap::mapObjDefHash.m_fulllist.Head(); def;
+                        def = CMap::mapObjDefHash.m_fulllist.Next(def)) {
+                    if (!def->m_owner) {
+                        continue;
+                    }
+                    const CAaBox& box = def->m_bbox;
+                    if (box.b.x < minX) minX = box.b.x;
+                    if (box.t.x > maxX) maxX = box.t.x;
+                    if (box.b.y < minY) minY = box.b.y;
+                    if (box.t.y > maxY) maxY = box.t.y;
+                    defs++;
+                }
+                if (defs > 0 && maxX > minX && maxY > minY) {
+                    const float kAdtSize = 533.33331f;
+                    const float kWorldOrigin = 17066.666f;
+                    // Tile X runs along world -Y; tile Y runs along world -X.
+                    txMin = static_cast<int32_t>(floorf((kWorldOrigin - maxY) / kAdtSize));
+                    txMax = static_cast<int32_t>(floorf((kWorldOrigin - minY) / kAdtSize));
+                    tyMin = static_cast<int32_t>(floorf((kWorldOrigin - maxX) / kAdtSize));
+                    tyMax = static_cast<int32_t>(floorf((kWorldOrigin - minX) / kAdtSize));
+                    if (txMin < 0) txMin = 0;
+                    if (tyMin < 0) tyMin = 0;
+                    if (txMax > 63) txMax = 63;
+                    if (tyMax > 63) tyMax = 63;
+                    if (txMax >= txMin && tyMax >= tyMin) {
+                        count = (txMax - txMin + 1) * (tyMax - tyMin + 1);
+                        globalWmoGrid = true;
+                        fprintf(stderr, "MapBaker: global WMO bounds X %.1f..%.1f Y %.1f..%.1f -> tiles tx %d..%d ty %d..%d\n",
+                                minX, maxX, minY, maxY, txMin, txMax, tyMin, tyMax);
+                    }
+                }
+            }
             printf("MapBaker: map '%s' (id %d): %d valid ADTs, tx %d..%d (%d wide), ty %d..%d (%d tall)\n",
                    s_mapDirectory, s_mapIdNum, count, txMin, txMax, (txMax - txMin + 1),
                    tyMin, tyMax, (tyMax - tyMin + 1));
-            for (int32_t ty = 0; ty < 64; ty++) {
-                for (int32_t tx = 0; tx < 64; tx++) {
-                    if (CMap::m_areaInfo[64 * ty + tx].m_flags & 1) {
+            if (globalWmoGrid) {
+                for (int32_t ty = tyMin; ty <= tyMax; ty++) {
+                    for (int32_t tx = txMin; tx <= txMax; tx++) {
                         printf("%d %d\n", tx, ty);
+                    }
+                }
+            } else {
+                for (int32_t ty = 0; ty < 64; ty++) {
+                    for (int32_t tx = 0; tx < 64; tx++) {
+                        if (CMap::m_areaInfo[64 * ty + tx].m_flags & 1) {
+                            printf("%d %d\n", tx, ty);
+                        }
                     }
                 }
             }

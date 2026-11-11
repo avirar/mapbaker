@@ -102,10 +102,19 @@ def main():
         log_path = os.path.join(args.out, '_worker_%d.log' % w)
         use_wine = (not args.no_wine) and os.name != 'nt' and args.exe.lower().endswith('.exe')
         exe_cmd = [args.wine, to_win_path(args.exe)] if use_wine else [args.exe]
+        extra_args = args.extra.split() if args.extra else []
+        layer = None
+        if '--layer' in extra_args:
+            li = extra_args.index('--layer')
+            if li + 1 < len(extra_args):
+                layer = extra_args[li + 1]
         cmd = exe_cmd + ['--client', to_win_path(args.client), '--map', args.map,
                '--tile-list', to_win_path(list_path), '--skip-existing',
                '--px', str(args.px), '--ssaa', str(args.ssaa),
-               '--preset', 'map', '--quads', '--out', to_win_path(args.out)]
+               '--preset', 'map', '--out', to_win_path(args.out)]
+        # Only the combined and quads outputs need the WMO quad table.
+        if layer is None or layer in ('combined', 'quads'):
+            cmd.append('--quads')
         if args.quad_cache:
             cmd += ['--quad-cache', to_win_path(args.quad_cache)]
         if args.extra:

@@ -3491,31 +3491,40 @@ void CWorldScene::RenderMapObjDefGroups() {
             const int32_t gidx = (xrayOn ? MapBakerXrayGateIdx(mapObjDef) : -1);
             const bool gated = (gidx >= 0) || (gidx == -2);
 
+            // Interior remaster: skip exterior shells/roofs in open-world maps. Instances
+            // are global WMOs (bDungeon); their groups are already the interior, so keep
+            // all of them and let backface culling remove downward-facing ceilings.
+            const bool interiorFilter = MapBakerInteriorOnly && !CMap::bDungeon;
+            const bool skipExterior = interiorFilter &&
+                    (mapObjDef->m_owner->GetGroupFlags(group->m_groupNum) & 0x10008);
+
             if (MapBakerQuadCollect) {
                 MapBakerQuadCollectDef(mapObjDef);
             }
 
-            if (MapBakerXrayDump && xrayOn) {
-                MapBakerXrayDumpWmo(group, mapObjDef, gidx);
-            }
+            if (!skipExterior) {
+                if (MapBakerXrayDump && xrayOn) {
+                    MapBakerXrayDumpWmo(group, mapObjDef, gidx);
+                }
 
-            if (!xrayOn || !gated) {
-                MapBakerXrayDrawGroup(group, mapObjDef, false, false);
-            } else if (MapBakerXrayTrickSkip(mapObjDef, gidx)) {
-                // Perspective-trick distance model: not part of the original city view;
-                // skip the geometry entirely rather than x-ray it into the city.
-            } else if (MapBakerXrayMode == 1) { // depthoff: natural order
-                MapBakerXrayDrawGroup(group, mapObjDef, true, false);
-            } else if (MapBakerXrayMode == 3) { // zinv: depth stays on
-                MapBakerXrayDrawGroup(group, mapObjDef, false, true);
-            } else if (xrayZSort && xrayCount < 4096) {
-                // Defer: drawn after the non-x-ray groups, Z-sorted (last = on top).
-                s_mapBakerXrayBuf[xrayCount].group = group;
-                s_mapBakerXrayBuf[xrayCount].def = mapObjDef;
-                s_mapBakerXrayBuf[xrayCount].z = (group->m_bbox.b.z + group->m_bbox.t.z) * 0.5f;
-                xrayCount++;
-            } else {
-                MapBakerXrayDrawGroup(group, mapObjDef, true, false); // overflow fallback
+                if (!xrayOn || !gated) {
+                    MapBakerXrayDrawGroup(group, mapObjDef, false, false);
+                } else if (MapBakerXrayTrickSkip(mapObjDef, gidx)) {
+                    // Perspective-trick distance model: not part of the original city view;
+                    // skip the geometry entirely rather than x-ray it into the city.
+                } else if (MapBakerXrayMode == 1) { // depthoff: natural order
+                    MapBakerXrayDrawGroup(group, mapObjDef, true, false);
+                } else if (MapBakerXrayMode == 3) { // zinv: depth stays on
+                    MapBakerXrayDrawGroup(group, mapObjDef, false, true);
+                } else if (xrayZSort && xrayCount < 4096) {
+                    // Defer: drawn after the non-x-ray groups, Z-sorted (last = on top).
+                    s_mapBakerXrayBuf[xrayCount].group = group;
+                    s_mapBakerXrayBuf[xrayCount].def = mapObjDef;
+                    s_mapBakerXrayBuf[xrayCount].z = (group->m_bbox.b.z + group->m_bbox.t.z) * 0.5f;
+                    xrayCount++;
+                } else {
+                    MapBakerXrayDrawGroup(group, mapObjDef, true, false); // overflow fallback
+                }
             }
         }
 
@@ -4384,6 +4393,11 @@ void CWorldScene::AddDoodadDefs(TSList<CMapBaseObjLink, TSGetExplicitLink<CMapBa
 // VERIFY: 9f2071e4 manual
 // OFFSET: 0x00799980
 void CWorldScene::CullDoodadsExterior(TSList<CMapBaseObjLink, TSGetExplicitLink<CMapBaseObjLink> >* linkList, uint8_t fadeLevel) {
+    // Interior remaster: ADT chunk doodads are outdoor props.
+    if (MapBakerInteriorOnly && !CMap::bDungeon) {
+        return;
+    }
+
     CMapBaseObjLink* link = linkList->Head();
 
     while (!linkList->IsEnd(link)) {
@@ -4595,7 +4609,11 @@ void CWorldScene::CullMapObjDefGroups(CSortEntry* entry, CRect* rect, uint32_t i
 
         if (CWorldScene::frustumStack[CWorldScene::frustumIndex].Cull(group->m_bbox) && !CWorldOcclusion::QueryVolumes(&group->m_sphere) && !CWorldOcclusion::QueryBuffer(&group->m_bbox, 0)) {
             mapObjDef->CullMapObjDefGroupFromExterior(group, rect, 0);
-            CWorldScene::AddDoodadDefs(&group->m_doodadDefLinkList, index);
+            // Skip doodads owned by exterior WMO groups when remastering interiors.
+            if (!MapBakerInteriorOnly || CMap::bDungeon ||
+                    !(mapObjDef->m_owner->GetGroupFlags(group->m_groupNum) & 0x10008)) {
+                CWorldScene::AddDoodadDefs(&group->m_doodadDefLinkList, index);
+            }
         }
 
         group = next;

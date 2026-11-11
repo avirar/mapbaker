@@ -81,6 +81,7 @@ extern int32_t MapBakerWaitTextures;
 // Used by the layer bake; set before RenderM2AndDetails / CM2SceneRender::Draw.
 extern int32_t MapBakerM2Filter;
 extern uint8_t MapBakerFlatWaterLight;
+extern uint8_t MapBakerInteriorOnly;
 bool MapBakerM2IsTree(const char* fileName);
 bool MapBakerM2IsEffect(const char* fileName);
 // Flat tint per class (RGB 0-255) and a shared alpha (0-255). Exterior vs interior get

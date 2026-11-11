@@ -70,6 +70,7 @@ uint8_t MapBakerQuadOn = 0;
 uint8_t MapBakerQuadWmoUnder = 0;
 uint8_t MapBakerQuadFill = 1;
 uint8_t MapBakerFlatWaterLight = 0;
+uint8_t MapBakerInteriorOnly = 0;
 int32_t MapBakerWaitTextures = 0;
 int32_t MapBakerM2Filter = 0;
 
@@ -1373,18 +1374,27 @@ namespace MapBakerWorld {
         clear.a = 0;   // native alpha capture needs a transparent clear
         g_theGxDevicePtr->SceneClear(3, clear);
 
-        GxRsSet(GxRs_ColorWrite, 0);
-        CWorldScene::RenderChunks();
-        GxRsSet(GxRs_ColorWrite, 15);
-        // NOTE: WMO depth is intentionally not used for the trees layer. A full WMO
-        // depth pass over-occludes trees across the tile (interior floors/ceilings
-        // write depth above the canopy). Terrain depth alone gives a usable trees
-        // layer; WMO ordering is handled by the viewer.
+        if (layer != 6) {
+            GxRsSet(GxRs_ColorWrite, 0);
+            CWorldScene::RenderChunks();
+            GxRsSet(GxRs_ColorWrite, 15);
+            // NOTE: WMO depth is intentionally not used for the trees layer. A full WMO
+            // depth pass over-occludes trees across the tile (interior floors/ceilings
+            // write depth above the canopy). Terrain depth alone gives a usable trees
+            // layer; WMO ordering is handled by the viewer.
+        }
 
         if (layer == 2) {  // WMO + non-tree M2 props
             MapBakerM2Filter = 2;
             CWorldScene::RenderMapObjDefGroups();
             RenderM2AndDetails(camPos, false);
+        } else if (layer == 6) {  // WMO interiors only (quad remaster experiment)
+            MapBakerInteriorOnly = 1;
+            MapBakerM2Filter = 2;
+            CWorldScene::RenderMapObjDefGroups();
+            RenderM2AndDetails(camPos, false);
+            MapBakerM2Filter = 0;
+            MapBakerInteriorOnly = 0;
         } else {  // common trees only
             MapBakerM2Filter = 1;
             RenderM2AndDetails(camPos, false);
@@ -1525,7 +1535,7 @@ namespace MapBakerWorld {
         bool matteReadOk = true;
         if (layer == 1) {
             RenderTerrainLayer();
-        } else if (layer == 2 || layer == 3) {
+        } else if (layer == 2 || layer == 3 || layer == 6) {
             RenderOverlayLayer(camPos, layer, 0);
             if (matteSolve) {
                 matteBlack.resize(static_cast<size_t>(s_rtSize) * s_rtSize * 3);

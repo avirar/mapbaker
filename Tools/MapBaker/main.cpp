@@ -171,7 +171,7 @@ static void Usage() {
     printf("  --client <path>     client data root (default: exe directory)\n");
     printf("  --map <dir|id>      map directory name or numeric id (required)\n");
     printf("  --preset <name>     map (default) | realistic\n");
-    printf("  --layer <name>      combined (default) | terrain | wmo | trees | quads\n");
+    printf("  --layer <name>      combined (default) | scene | terrain | wmo | trees | interiors | quads\n");
     printf("  --px <n>            tile resolution in pixels (default 1024)\n");
     printf("  --ssaa <n>          supersampling factor (default 2)\n");
     printf("  --out <dir>         output directory for PNG tiles (default: exe dir)\n");
@@ -283,9 +283,11 @@ int main(int argc, char** argv) {
         } else if (!strcmp(argv[i], "--layer") && i + 1 < argc) {
             const char* layer = argv[++i];
             if (!strcmp(layer, "combined")) config.layer = 0;
+            else if (!strcmp(layer, "scene")) config.layer = 5;
             else if (!strcmp(layer, "terrain")) config.layer = 1;
             else if (!strcmp(layer, "wmo")) config.layer = 2;
             else if (!strcmp(layer, "trees")) config.layer = 3;
+            else if (!strcmp(layer, "interiors")) config.layer = 6;
             else if (!strcmp(layer, "quads")) config.layer = 4;
             else {
                 fprintf(stderr, "MapBaker: --layer expects combined | terrain | wmo | trees | quads\n");
