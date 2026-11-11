@@ -184,6 +184,8 @@ static void Usage() {
     printf("                      map preset default = neutral (flat white light); realistic = client\n");
     printf("  --light-desat <f>   desaturation 0..1 (implies --light-mode desat; 1 = neutral)\n");
     printf("  --ignore-zone-light ignore Light.dbc color cast (alias for --light-mode neutral)\n");
+    printf("  --water-mode <m>    water colour: client | map | desat\n");
+    printf("                      map preset default = map (fixed ocean palette), realistic = client\n");
     printf("  --gain <f>          post-render brightness gain (default 1.0)\n");
     printf("  --flat-light        alias for --light-elev 89 (flat city-floor look)\n");
     printf("  --city-file <path>  ADT list (\"tx ty\" per line) rendered with the city sun\n");
@@ -233,6 +235,7 @@ int main(int argc, char** argv) {
     config.lightElev = -1.0f;
     config.lightMode = -1;       // preset default: map = neutral, realistic = client
     config.lightDesat = 1.0f;
+    config.waterMode = -1;       // preset default: map = map palette, realistic = client
     config.gain = 1.0f;
     config.cityElev = -1.0f;
     config.xrayMode = 0;
@@ -333,6 +336,18 @@ int main(int argc, char** argv) {
         } else if (!strcmp(argv[i], "--ignore-zone-light") || !strcmp(argv[i], "--neutral-light")) {
             config.lightMode = 1;
             config.lightDesat = 1.0f;
+        } else if (!strcmp(argv[i], "--water-mode") && i + 1 < argc) {
+            const char* mode = argv[++i];
+            if (!strcmp(mode, "client")) {
+                config.waterMode = 0;
+            } else if (!strcmp(mode, "map")) {
+                config.waterMode = 1;
+            } else if (!strcmp(mode, "desat")) {
+                config.waterMode = 2;
+            } else {
+                fprintf(stderr, "MapBaker: --water-mode expects client | map | desat\n");
+                return 1;
+            }
         } else if (!strcmp(argv[i], "--gain") && i + 1 < argc) {
             config.gain = static_cast<float>(strtod(argv[++i], nullptr));
         } else if (!strcmp(argv[i], "--flat-light")) {

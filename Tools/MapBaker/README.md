@@ -125,6 +125,7 @@ terrain+WMO and the 2D art overlay**. Disable with `--no-quad-fill`.
 | `--light-mode <client\|neutral\|desat\|flat>` | terrain light **colour**: `client` keeps `Light.dbc` zone colours; `neutral` luminance-gray; `desat` uses `--light-desat`; `flat` = neutral + `--light-elev 89` if no elevation was given. `map` preset defaults to **neutral**, `realistic` to `client`; explicit flags win |
 | `--light-desat <0..1>` | partial desaturation (implies `--light-mode desat`; `1` = neutral) |
 | `--ignore-zone-light` | alias for `--light-mode neutral` |
+| `--water-mode <client\|map\|desat>` | water **colour**: `client` keeps `LightIntBand` zone water; `map` uses one flat ocean palette `(30,59,93)` (map preset default); `desat` desaturates the client bands. The map palette is scaled by the neutral light intensity so every ADT matches |
 | `--gain <f>` | post-render brightness gain |
 | `--city-file <path>` / `--city-elev <deg>` | city ADT list + its sun elevation |
 | `--xray <off\|depthoff\|zsort\|zinv>` etc. | x-ray city-floor modes (legacy/indoor look) |
@@ -215,6 +216,14 @@ Outputs (Eastern Kingdoms example): `tiles/` (882 PNG), `ek1024.tif` (21,504 × 
   otherwise paint Borean Tundra/Dragonblight/Icecrown blue. Pass `--light-mode client` (or
   `--light-desat <0..1>`) to restore the zone colours. Colour mode only changes ambient/
   diffuse/specular colour; direction and elevation stay with `--light-elev`.
+- The client's per-zone water bands swing hard (Northrend: dark blue 16,40,76 → green
+  52,76,64 → blue 29,58,93). The `map` preset therefore defaults to `--water-mode map`,
+  which writes one flat ocean palette into `DayNight::DNInfo::m_bands.m_waterColors` and
+  scales it by `ambient + diffuse`, so adjacent ocean ADTs render the same colour.
+- The ortho left clip plane can corrupt the first render-target column on some tile
+  alignments (Northrend: every `tx % 3 == 0`), producing a bright 1-px vertical seam.
+  `RenderTile` copies column 1 over column 0 at RT resolution, mirroring the existing
+  row-0 fix; the box downsample then sees a clean pair.
 
 ## Source layout
 

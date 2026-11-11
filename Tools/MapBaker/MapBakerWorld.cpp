@@ -102,6 +102,10 @@ namespace {
     int32_t s_lightMode = -1;
     float s_lightDesat = 1.0f;
 
+    // Water colour mode: -1 = preset default, 0 = client DBC bands, 1 = fixed map
+    // palette, 2 = desaturate the client bands by s_lightDesat.
+    int32_t s_waterMode = -1;
+
     // Post-render brightness gain applied to the readback (1.0 = no change). The baked
     // minimap art is brighter than a direct render; a ~1.1-1.2 gain matches its tone.
     float s_gain = 1.0f;
@@ -168,12 +172,114 @@ namespace {
             static int s_printed = 0;
             if (s_printed < 4) {
                 s_printed++;
+                const DayNight::DNInfo* dn = DayNight::GetInfo();
                 fprintf(stderr,
                         "MapBaker light: mode=%d amount=%.2f amb=(%.3f,%.3f,%.3f) "
-                        "dir=(%.3f,%.3f,%.3f)\n",
+                        "dir=(%.3f,%.3f,%.3f) water=[%d,%d,%d | %d,%d,%d | %d,%d,%d | %d,%d,%d] "
+                        "fog=(%d,%d,%d) alpha=(%.2f,%.2f,%.2f,%.2f)\n",
                         s_lightMode, amount,
                         light.m_ambColor.x, light.m_ambColor.y, light.m_ambColor.z,
-                        light.m_dirColor.x, light.m_dirColor.y, light.m_dirColor.z);
+                        light.m_dirColor.x, light.m_dirColor.y, light.m_dirColor.z,
+                        dn->m_bands.m_waterColors[0].r, dn->m_bands.m_waterColors[0].g, dn->m_bands.m_waterColors[0].b,
+                        dn->m_bands.m_waterColors[1].r, dn->m_bands.m_waterColors[1].g, dn->m_bands.m_waterColors[1].b,
+                        dn->m_bands.m_waterColors[2].r, dn->m_bands.m_waterColors[2].g, dn->m_bands.m_waterColors[2].b,
+                        dn->m_bands.m_waterColors[3].r, dn->m_bands.m_waterColors[3].g, dn->m_bands.m_waterColors[3].b,
+                        dn->m_fog.m_color.r, dn->m_fog.m_color.g, dn->m_fog.m_color.b,
+                        dn->m_bands.m_oceanShallowAlpha, dn->m_bands.m_oceanDeepAlpha,
+                        dn->m_bands.m_waterShallowAlpha, dn->m_bands.m_waterDeepAlpha);
+            }
+        }
+    }
+
+    CImVector DesaturateWaterColor(const CImVector& color, float amount) {
+        const float luma = 0.2126f * color.r + 0.7152f * color.g + 0.0722f * color.b;
+        const auto mix = [&](uint8_t channel) {
+            const float v = channel + (luma - channel) * amount;
+            return static_cast<uint8_t>(v < 0.0f ? 0.0f : (v > 255.0f ? 255.0f : v));
+        };
+        CImVector out;
+        out.a = color.a;
+        out.r = mix(color.r);
+        out.g = mix(color.g);
+        out.b = mix(color.b);
+        return out;
+    }
+
+    void ApplyWaterColorMode() {
+        if (s_waterMode == 0) {
+            return; // client Light.dbc water bands
+        }
+
+        DayNight::DNInfo* info = DayNight::GetInfo();
+        if (!info || !CMap::s_mapLight) {
+            return;
+        }
+
+        if (s_waterMode == 1) {
+            // Map preset: one ocean palette for the whole continent, matching the original
+            // 3.3.5a minimap's flat ocean (30,59,93). The client bands swing hard between
+            // zones (Northrend: 16,40,76 -> green 52,76,64 -> 29,58,93), which shows up as
+            // per-ADT water rectangles. Feed one pre-darkened source colour for both shallow
+            // and deep: the liquid shader applies its own depth gradient and darkening.
+            CImVector shallow;
+            shallow.a = 255;
+            shallow.r = 33;
+            shallow.g = 70;
+            shallow.b = 113;
+
+            CImVector deep = shallow;
+
+            // Water is lit by ambient+diffuse, and neutral desaturation preserves each
+            // zone's intensity. Normalise the palette by the current light sum so the
+            // final ocean colour is the same in every zone (otherwise shallow zones
+            // render ~18% brighter and show up as rectangles).
+            const CM2Light& light = CMap::s_mapLight->m_light;
+            float intensity = light.m_ambColor.x + light.m_dirColor.x;
+            if (intensity < 0.05f) {
+                intensity = 0.05f;
+            }
+            const float scale = 0.96f / intensity;
+            const auto scaled = [&](uint8_t v) {
+                const float f = v * scale;
+                return static_cast<uint8_t>(f < 0.0f ? 0.0f : (f > 255.0f ? 255.0f : f));
+            };
+            shallow.r = scaled(shallow.r);
+            shallow.g = scaled(shallow.g);
+            shallow.b = scaled(shallow.b);
+            deep = shallow;
+
+            info->m_bands.m_waterColors[0] = shallow; // ocean shallow
+            info->m_bands.m_waterColors[1] = deep;    // ocean deep
+            info->m_bands.m_waterColors[2] = shallow; // river/lake shallow
+            info->m_bands.m_waterColors[3] = deep;    // river/lake deep
+        } else {
+            float amount = s_lightDesat;
+            if (amount <= 0.0f) {
+                return;
+            }
+            if (amount > 1.0f) {
+                amount = 1.0f;
+            }
+            for (int32_t i = 0; i < 4; i++) {
+                info->m_bands.m_waterColors[i] =
+                    DesaturateWaterColor(info->m_bands.m_waterColors[i], amount);
+            }
+        }
+
+        if (getenv("MAPBAKER_DEBUG_LIGHT")) {
+            static int s_printed = 0;
+            if (s_printed < 4) {
+                s_printed++;
+                fprintf(stderr,
+                        "MapBaker water: mode=%d colors=[%d,%d,%d | %d,%d,%d | %d,%d,%d | %d,%d,%d] "
+                        "alpha=(%.2f,%.2f,%.2f,%.2f)\n",
+                        s_waterMode,
+                        info->m_bands.m_waterColors[0].r, info->m_bands.m_waterColors[0].g, info->m_bands.m_waterColors[0].b,
+                        info->m_bands.m_waterColors[1].r, info->m_bands.m_waterColors[1].g, info->m_bands.m_waterColors[1].b,
+                        info->m_bands.m_waterColors[2].r, info->m_bands.m_waterColors[2].g, info->m_bands.m_waterColors[2].b,
+                        info->m_bands.m_waterColors[3].r, info->m_bands.m_waterColors[3].g, info->m_bands.m_waterColors[3].b,
+                        info->m_bands.m_oceanShallowAlpha, info->m_bands.m_oceanDeepAlpha,
+                        info->m_bands.m_waterShallowAlpha, info->m_bands.m_waterDeepAlpha);
             }
         }
     }
@@ -289,6 +395,7 @@ namespace {
         // preserving the direction/elevation set above. The client/realistic mode is a
         // no-op.
         ApplyLightColorMode();
+        ApplyWaterColorMode();
     }
 
     void RenderWorld() {
@@ -788,6 +895,10 @@ namespace MapBakerWorld {
         if (s_lightMode < 0) {
             s_lightMode = (preset == Preset_Map) ? 1 : 0;
         }
+        if (s_waterMode < 0) {
+            // Client terrain light implies client water; otherwise the map palette.
+            s_waterMode = (preset == Preset_Map && s_lightMode != 0) ? 1 : 0;
+        }
 
         ApplyFadeDistances();
     }
@@ -809,6 +920,10 @@ namespace MapBakerWorld {
             amount = 1.0f;
         }
         s_lightDesat = amount;
+    }
+
+    void SetWaterMode(int32_t mode) {
+        s_waterMode = mode;
     }
 
     void SetGain(float gain) {
@@ -1120,6 +1235,20 @@ namespace MapBakerWorld {
         {
             const size_t rowBytes = static_cast<size_t>(s_rtSize) * 3;
             memcpy(full.data(), full.data() + rowBytes, rowBytes); // row 0 := row 1
+        }
+
+        // The same clip-plane artifact exists on the left edge, but only at certain tile
+        // alignments (in Northrend every third ADT, tx % 3 == 0): the first RT column samples
+        // the ortho clip plane and gets the fog/clear colour instead of terrain/liquid, which
+        // becomes a bright 1-px vertical line after the 2x box downsample. Verify with
+        // --px 2048 --ssaa 1 on tile 571/42,16: RT col 0 is ~(86,179,212), col 1 is ~(27,51,79).
+        // Copy column 1 over column 0 at full RT resolution so the downsample pair is clean.
+        {
+            const size_t rowBytes = static_cast<size_t>(s_rtSize) * 3;
+            for (uint32_t y = 0; y < s_rtSize; y++) {
+                uint8_t* row = full.data() + static_cast<size_t>(y) * rowBytes;
+                memcpy(row, row + 3, 3); // column 0 := column 1
+            }
         }
 
         // Report coverage (share of pixels that differ from the horizon/fog clear color). A

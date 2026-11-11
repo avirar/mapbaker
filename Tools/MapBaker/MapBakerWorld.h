@@ -38,6 +38,11 @@ namespace MapBakerWorld {
     // still controlled by SetLightElevation; only ambient/diffuse color changes.
     void SetLightMode(int32_t mode, float amount);
 
+    // Water colour mode. 0 = keep Light.dbc zone water bands (client/realistic),
+    // 1 = fixed map-ocean palette (map preset default), 2 = desaturate the client
+    // bands by the light-desat amount, -1 = preset default.
+    void SetWaterMode(int32_t mode);
+
     // Post-render brightness gain for the readback (1.0 = no change).
     void SetGain(float gain);
 

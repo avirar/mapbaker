@@ -21,6 +21,9 @@ namespace MapBakerApp {
         // -1 = preset default (map: neutral, realistic: client).
         int32_t lightMode;
         float lightDesat;        // 0..1, used by lightMode 2; neutral is 1.0
+        // 0 = client Light.dbc water bands, 1 = fixed map-ocean palette,
+        // 2 = desaturate, -1 = preset default (map: map palette, realistic: client).
+        int32_t waterMode;
         float gain;              // post-render brightness gain (1.0 = no change)
         const char* cityFile;    // ADT list ("tx ty" per line) rendered with the city sun
         float cityElev;          // light elevation for city ADTs (-1 = use lightElev)

@@ -270,6 +270,7 @@ namespace {
         MapBakerWorld::SetNoWmo(s_config.noWmo);
         MapBakerWorld::SetLightElevation(s_config.lightElev);
         MapBakerWorld::SetLightMode(s_config.lightMode, s_config.lightDesat);
+        MapBakerWorld::SetWaterMode(s_config.waterMode);
         MapBakerWorld::SetGain(s_config.gain);
         MapBakerWorld::SetCityLightElevation(s_config.cityElev);
         if (s_config.cityFile) {

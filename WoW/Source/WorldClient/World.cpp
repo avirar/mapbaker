@@ -2536,6 +2536,13 @@ void CWorldScene::CullLiquid(CSortEntry* entry) {
             liquid->GetAaBox(box);
 
             if (CWorldScene::frustumStack[CWorldScene::frustumIndex].Cull(box) && !CWorldOcclusion::QueryBuffer(&box, 0) && !CWorldOcclusion::QueryVolumes(liquid->GetSphere())) {
+                if (getenv("MAPBAKER_DEBUG_LIQUID")) {
+                    const LiquidTypeRec* rec = g_liquidTypeDB.GetRecord(liquid->m_type);
+                    fprintf(stderr, "MapBaker liq: tile=%d type=%u mat=%d z=(%.1f,%.1f) pos=(%.1f,%.1f)\n",
+                            MapBakerDebugTileTag, (unsigned)liquid->m_type,
+                            rec ? rec->m_materialID : -1, liquid->m_height.x, liquid->m_height.y,
+                            liquid->m_topLeftCoords.x, liquid->m_topLeftCoords.y);
+                }
                 liquid->RenderPrep();
 
                 if (CWorldScene::s_liquidRenderer && liquid->m_instance) {
