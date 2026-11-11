@@ -72,7 +72,10 @@ HTML = r'''<!doctype html>
     <button class="toggle on" id="t-scene" data-layer="scene" aria-pressed="true"><span class="dot"></span>Scene (terrain + WMO + trees)</button>
   </div>
   <div class="layer">
-    <button class="toggle on" id="t-quads" data-layer="quads" aria-pressed="false"><span class="dot"></span>Minimap quads</button>
+    <button class="toggle on" id="t-quads-ext" data-layer="quads-ext" aria-pressed="false"><span class="dot"></span>Minimap quads — exterior</button>
+  </div>
+  <div class="layer">
+    <button class="toggle on" id="t-quads-int" data-layer="quads-int" aria-pressed="false"><span class="dot"></span>Minimap quads — interior</button>
   </div>
   <div class="layer">
     <button class="toggle on" id="t-interiors" data-layer="interiors" aria-pressed="true"><span class="dot"></span>Interior remaster</button>
@@ -96,14 +99,15 @@ const TX0=@TX0@, TY0=@TY0@, PX=@PX@, MAPID=@MAPID@;
 const A=533.33331, O=17066.666;
 const LAYERS=[
   {id:'scene', file:'@NAME@-scene.dzi'},
-  {id:'quads', file:'@NAME@-quads.dzi'},
-  {id:'interiors', file:'@NAME@-interiors.dzi'}
+  {id:'interiors', file:'@NAME@-interiors.dzi'},
+  {id:'quads-ext', file:'@NAME@-quads-ext.dzi'},
+  {id:'quads-int', file:'@NAME@-quads-int.dzi'}
 ];
-const state={visible:{scene:true,quads:false,interiors:true}, crosshair:true, quadsOpacity:1.0, items:{}};
+const state={visible:{scene:true,interiors:true,'quads-ext':false,'quads-int':false}, crosshair:true, quadsOpacity:1.0, items:{}};
 let viewer=null, loaded=0;
 
 function updateButtons(){
-  for (const id of ['scene','quads','interiors']) {
+  for (const id of ['scene','interiors','quads-ext','quads-int']) {
     const b=document.getElementById('t-'+id);
     b.classList.toggle('on', !!state.visible[id]);
     b.setAttribute('aria-pressed', state.visible[id] ? 'true' : 'false');
@@ -120,17 +124,23 @@ function applyLayer(id){
   const item=state.items[id];
   if (!item) return;
   let op=0;
-  if (state.visible[id]) op=(id==='quads') ? state.quadsOpacity : 1;
+  if (state.visible[id]) op=(id==='quads-ext' || id==='quads-int') ? state.quadsOpacity : 1;
   item.setOpacity(op);
 }
 function applyAll(){
-  applyLayer('scene'); applyLayer('quads'); applyLayer('interiors');
-  if (viewer) { viewer.world.setItemIndex(state.items.scene,0); viewer.world.setItemIndex(state.items.quads,1); viewer.world.setItemIndex(state.items.interiors,2); viewer.forceRedraw(); }
+  applyLayer('scene'); applyLayer('interiors'); applyLayer('quads-ext'); applyLayer('quads-int');
+  if (viewer) {
+    viewer.world.setItemIndex(state.items.scene,0);
+    viewer.world.setItemIndex(state.items.interiors,1);
+    viewer.world.setItemIndex(state.items['quads-ext'],2);
+    viewer.world.setItemIndex(state.items['quads-int'],3);
+    viewer.forceRedraw();
+  }
   updateButtons();
 }
 function setVisible(id,on){
   state.visible[id]=!!on;
-  if (id==='quads' && on && state.quadsOpacity===0) state.quadsOpacity=1;
+  if ((id==='quads-ext' || id==='quads-int') && on && state.quadsOpacity===0) state.quadsOpacity=1;
   applyLayer(id); updateButtons();
 }
 function initOSD(){
@@ -209,8 +219,7 @@ function initOSD(){
   });
   document.getElementById('qopacity').addEventListener('input',e=>{
     state.quadsOpacity=Number(e.target.value)/100;
-    state.visible.quads = state.quadsOpacity>0;
-    applyLayer('quads'); updateButtons();
+    applyLayer('quads-ext'); applyLayer('quads-int'); updateButtons();
   });
   document.getElementById('t-cross').addEventListener('click',()=>{
     state.crosshair=!state.crosshair; updateButtons();
@@ -226,7 +235,7 @@ function initOSD(){
     b.textContent='Copied'; setTimeout(()=>{ b.textContent='Copy coords'; },1200);
   });
   document.getElementById('reset').addEventListener('click',()=>{
-    state.visible={scene:true,quads:false,interiors:true}; state.quadsOpacity=1; applyAll();
+    state.visible={scene:true,interiors:true,'quads-ext':false,'quads-int':false}; state.quadsOpacity=1; applyAll();
   });
   updateButtons();
 }
