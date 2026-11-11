@@ -180,6 +180,20 @@ def make_index(args, records):
         return ('<a class="card" href="%s/out/viewer.html"><img src="%s" loading="lazy" alt="">'
                 '<div class="body"><b>%s</b><span>map %d · %d px/ADT · %d tiles</span></div></a>'
                 % (rel, img, title, mid, px, count))
+
+    default_href = ''
+    for c in cards:
+        if c[0] == 550:
+            default_href = '%s/out/viewer-interiors.html' % c[2]
+            break
+    if not default_href and cards:
+        default_href = '%s/out/viewer.html' % cards[0][2]
+    options = []
+    for c in cards:
+        href = '%s/out/viewer-interiors.html' % c[2]
+        selected = ' selected' if href == default_href else ''
+        options.append('<option value="%s"%s>%s</option>' % (href, selected, c[1]))
+
     html = '''<!doctype html><html lang="en"><head><meta charset="utf-8">
 <title>MapBaker — final maps</title>
 <style>
@@ -193,14 +207,31 @@ def make_index(args, records):
  .card img{display:block;width:100%;height:150px;object-fit:contain;background:#162838}
  .body{padding:9px 11px}.body b{display:block;color:#9fd0ff;font-size:15px}
  .body span{color:#7f96ab;font-size:11px}
+ .hero{margin:0 0 26px;border:1px solid #23384d;border-radius:9px;overflow:hidden;background:#101f2d}
+ .herobar{display:flex;gap:10px;align-items:center;padding:10px 12px;border-bottom:1px solid #23384d}
+ .herobar select{flex:1;background:#0f1d2a;color:#d7e6f5;border:1px solid #2a4157;border-radius:5px;padding:6px}
+ .herobar a{color:#9fd0ff;white-space:nowrap;font-size:12px}
+ #frame{display:block;width:100%;height:68vh;border:0;background:#0b1620}
 </style></head><body>
 <h1>MapBaker — final maps</h1>
 <div class="sub">Scene + minimap quads · continents 1024 px/ADT · instances 4096 px/ADT<br>
 <a href="remaster/index.html" style="color:#9fd0ff">Interior remaster gallery →</a></div>
+<div class="hero">
+ <div class="herobar">
+  <select id="mapsel">@OPTIONS@</select>
+  <a id="open" href="@DEFAULT@" target="_blank">Open full viewer ↗</a>
+ </div>
+ <iframe id="frame" src="@DEFAULT@" loading="eager"></iframe>
+</div>
 <div class="grid">
 @CARDS@
 </div>
-</body></html>'''.replace('@CARDS@', '\n'.join(card(c) for c in cards))
+<script>
+const sel=document.getElementById('mapsel'), frame=document.getElementById('frame'), open=document.getElementById('open');
+function setViewer(){ frame.src=sel.value; open.href=sel.value; }
+sel.addEventListener('change', setViewer);
+</script>
+</body></html>'''.replace('@CARDS@', '\n'.join(card(c) for c in cards)).replace('@OPTIONS@', '\n'.join(options)).replace('@DEFAULT@', default_href)
     path = os.path.join(args.root, 'index.html')
     with open(path, 'w', encoding='utf-8') as f:
         f.write(html)
