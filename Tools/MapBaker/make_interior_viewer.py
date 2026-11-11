@@ -75,7 +75,7 @@ HTML = r'''<!doctype html>
     <button class="toggle on" id="t-quads-ext" data-layer="quads-ext" aria-pressed="false"><span class="dot"></span>Minimap quads — exterior</button>
   </div>
   <div class="layer">
-    <button class="toggle on" id="t-quads-int" data-layer="quads-int" aria-pressed="false"><span class="dot"></span>Minimap quads — interior</button>
+    <button class="toggle on" id="t-quads-int" data-layer="quads-int" aria-pressed="true"><span class="dot"></span>Minimap quads — interior</button>
   </div>
   <div class="layer">
     <button class="toggle on" id="t-interiors" data-layer="interiors" aria-pressed="true"><span class="dot"></span>Interior remaster</button>
@@ -89,7 +89,7 @@ HTML = r'''<!doctype html>
   </div>
   <button class="reset" id="reset">Reset layers</button>
   <button id="copy">Copy coords</button>
-  <div class="hint">Interiors replace the 2D quads.<br>Toggle quads to compare the original art.<br>Crosshair is fixed at the centre.</div>
+  <div class="hint">Interior remaster + interior quads.<br>Exterior quads are optional; toggle either.<br>Crosshair is fixed at the centre.</div>
   <div id="err"></div>
 </div>
 <div id="hud">loading…</div>
@@ -103,7 +103,7 @@ const LAYERS=[
   {id:'quads-ext', file:'@NAME@-quads-ext.dzi'},
   {id:'quads-int', file:'@NAME@-quads-int.dzi'}
 ];
-const state={visible:{scene:true,interiors:true,'quads-ext':false,'quads-int':false}, crosshair:true, quadsOpacity:1.0, items:{}};
+const state={visible:{scene:true,interiors:true,'quads-ext':false,'quads-int':true}, crosshair:true, quadsOpacity:1.0, items:{}};
 let viewer=null, loaded=0;
 
 function updateButtons(){
@@ -235,7 +235,7 @@ function initOSD(){
     b.textContent='Copied'; setTimeout(()=>{ b.textContent='Copy coords'; },1200);
   });
   document.getElementById('reset').addEventListener('click',()=>{
-    state.visible={scene:true,interiors:true,'quads-ext':false,'quads-int':false}; state.quadsOpacity=1; applyAll();
+    state.visible={scene:true,interiors:true,'quads-ext':false,'quads-int':true}; state.quadsOpacity=1; applyAll();
   });
   updateButtons();
 }
