@@ -38,7 +38,7 @@ Tools/MapBaker/linux/build-mapbaker.sh
 # -> bin/Win/MapBaker64.exe
 ```
 
-The toolchain adds the portability flags the decompiled MSVC sources need:
+The toolchain adds the portability flags the MSVC-style sources need:
 `-fms-extensions`, SEH codegen, `-fno-strict-aliasing`, no FP contraction,
 `-Wno-register`, `-Wno-c++11-narrowing`. The runtime is `/MD`, matching the
 existing MSVC build.
@@ -75,7 +75,7 @@ python3 Tools/MapBaker/bake_parallel.py \
   --tx0 24 --tx1 44 --ty0 20 --ty1 61 --px 1024 --ssaa 2 \
   --out /media/storage/mapbaker/ek1024 --workers 6 \
   --quad-cache /media/storage/mapbaker/reference/ek.quadcache \
-  --exe /media/storage/projects/wowdecomp/bin/Win/MapBaker64.exe \
+  --exe /path/to/mapbaker/bin/Win/MapBaker64.exe \
   --extra "--light-elev 60"
 ```
 

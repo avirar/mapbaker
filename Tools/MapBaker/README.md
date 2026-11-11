@@ -36,7 +36,7 @@ python Tools\MapBaker\bake_parallel.py --client C:\Games\ChromieCraft_3.3.5a --m
     --quad-cache Z:\aviroth-testrealm-data\mapbaker\ek1024\ek.quadcache ^
     --extra "--light-elev 60"
 
-:: stitch -> BigTIFF + DZI + viewer (vips from wowdecomp-deps)
+:: stitch -> BigTIFF + DZI + viewer (libvips)
 python Tools\MapBaker\stitch.py --tiles Z:\...\ek1024 --out C:\mapbaker\ek1024 ^
     --work C:\Users\%USERNAME%\AppData\Local\Temp\mbstitch --name ek1024 ^
     --tx0 24 --tx1 44 --ty0 20 --ty1 61 --px 1024
@@ -188,7 +188,7 @@ Deleting the file forces a fresh collection.
 
 ## Stitching (`Tools/MapBaker/stitch.py`)
 
-Requires portable libvips (`C:\GIT\wowdecomp-deps\vips`). Steps: background-filled row
+Requires libvips 8.x. Steps: background-filled row
 strips (tiles missing or single-colour are replaced with `--background`) → mosaic `.v` →
 **pyramidal BigTIFF** (512-px tiles, `--tiff-compression` / `--tiff-level`) → **DZI**
 pyramid (512 px, 1-px overlap) → preview → OpenSeadragon viewer (`viewer.html`).

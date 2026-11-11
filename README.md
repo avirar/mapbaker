@@ -1,109 +1,355 @@
-# wowdecomp
+# MapBaker
 
-A C++ decompilation of the World of Warcraft 3.3.5a client (`Wow.exe`, build 12340, June 2010).
+Offline, layered map renderer for World of Warcraft 3.3.5a. MapBaker renders every ADT
+through the game's real world pipeline — terrain, WMO buildings, M2 props, trees and
+liquids — from a top-down orthographic camera, then stitches the tiles into deep-zoom
+pyramids you can browse in a browser.
 
-Join the discord for other clients and to show off some cool stuff you build.
+The output is split into independently toggleable layers instead of one flat image:
 
-https://discord.gg/DsZMGUD8aT
+| Layer | Contents | Format |
+|---|---|---|
+| `terrain` | Terrain, terrain shadows, ADT water/lava/slime | opaque RGB |
+| `wmo` | WMO buildings + all non-tree M2 props | transparent RGBA |
+| `trees` | Common tree M2s only | transparent RGBA |
+| `quads` | The client's original 2D minimap artwork | transparent RGBA |
+| `combined` | Legacy single-image render (all of the above) | opaque RGB |
 
-Every function is reconstructed from the original binary and keeps the address it came from in an
-`// OFFSET:` tag, so each one can be compared against the original. The source tree follows the layout
-of the original client (`Engine/Source/<Module>`, `WoW/Source/<Module>`, original file names).
+Each layer gets a BigTIFF master, a DZI deep-zoom pyramid and a shared browser viewer
+with layer toggles, a minimap-opacity slider, reordering and a checkerboard background
+when terrain is hidden.
 
-x64 is the main target. Win32 still builds and is used to check struct layouts against the 32-bit
-original.
-
-## Progress
-
-The percentages below measure how much of the original binary has a counterpart in this source tree. They do
-**not** say how much of the game works, and the missing part is not missing gameplay: the client builds into a
-complete executable and the game is 100% playable. Bugs could still be hiding, though; a ported function can behave differently
-from the original.
-
-Measured against the 12340 binary on 2026-10-15. A function counts as ported when its address is
-tagged in the source.
-
-| | Ported | Total | Share of the original |
-|---|---:|---:|---:|
-| Functions | 24,515 | 27,157 | 90.3% |
-| Code bytes | 5,270,186 | 5,656,573 | 93.2% |
-
-The total leaves out 658 functions that IDA identifies as compiler library code and 132 import thunks.
-Most of the untagged remainder is code the build gets elsewhere: compiler-generated code (static
-initializers, template instances) that our compiler emits on its own, C runtime helpers, and third-party
-libraries that are linked from their upstream sources instead of being decompiled (FreeType, zlib, PCRE,
-parts of FMOD Ex).
+---
 
 ## Requirements
 
-- Windows 10 or 11
-- Visual Studio 2022 with the **Desktop development with C++** workload (MSVC v143 and a Windows SDK)
-- CMake 3.10 or newer (the one that ships with Visual Studio works)
-- For Win32 builds only: [NASM](https://www.nasm.us/), on `PATH` or passed as `-DNASM_EXECUTABLE=<path>`, and
-  `DivxDecoder.dll` from your 3.3.5a client copied to `ThirdParty/DivxDecoder/` (the build copies it next to the
-  executables; the x64 build uses its own decoder instead)
-- A World of Warcraft **3.3.5a (12340)** client. No game data is included in this repository.
+- World of Warcraft **3.3.5a (12340)** game data. No game data is included here.
+- **Linux:** clang-cl, lld-link, llvm-lib, llvm-rc, CMake, Ninja, ccache, `xwin`,
+  Wine + DXVK, Xvfb or a real X display.
+- **Windows:** Visual Studio 2022 with the Desktop C++ workload, CMake.
+- **Stitching:** libvips 8.x (`vips`, `dzsave`, BigTIFF support).
+- **Runtime:** Python 3.10+ for the batch driver, stitcher and viewer generator.
+- A GPU that supports a 8192×8192 D3D9 render target for 4096 px/ADT with SSAA 2.
+- About 1 GB RAM per bake worker; an SSD for large stitch work directories.
 
-## Building
+---
 
-From a Developer PowerShell or any shell with `cmake` on `PATH`:
+## Build
 
-```powershell
-git clone https://github.com/SatyPardus/wowdecomp.git
-cd wowdecomp
+### Linux (Windows PE + Wine/DXVK)
 
-# x64 (main target)
-cmake -S . -B build/x64 -G "Visual Studio 17 2022" -A x64
-cmake --build build/x64 --config Release --target WowClient --parallel
+```bash
+# once: stage the MSVC headers/libs
+cargo install --locked xwin
+xwin --accept-license splat --output /path/to/xwin
 
-# Win32 (optional, needs NASM)
-cmake -S . -B build/win32 -G "Visual Studio 17 2022" -A Win32
-cmake --build build/win32 --config Release --target WowClient --parallel
+# build
+XWIN_ROOT=/path/to/xwin Tools/MapBaker/linux/build-mapbaker.sh
+# -> bin/Win/MapBaker64.exe
 ```
 
-In-source builds are refused, so keep the build directory separate (`build/` above).
+`Tools/MapBaker/linux/env.sh` provides the Wine helpers used below:
 
-The client is written to `bin/Win/`:
+```bash
+source Tools/MapBaker/linux/env.sh
+xvfb_start
+```
 
-| Target | x64 | Win32 |
-|---|---|---|
-| `WowClient` | `WowClient64.exe` | `WowClient32.exe` |
-| `Wow` | `Wow64.exe` | `Wow32.exe` |
+### Windows
 
-`WowClient` is the client with a crash logger: it opens a console window and writes
-`WowClient_crash.log` when the client crashes. `Wow` is the same client without it. You can also turn the
-logger off in `WowClient` with `-DWOWCLIENT_CRASH_LOG=OFF`.
+```powershell
+cmake -S . -B build/x64 -G "Visual Studio 17 2022" -A x64
+cmake --build build/x64 --config Release --target MapBaker --parallel
+# -> bin\Win\MapBaker64.exe
+```
 
-### Options
+Stop any running `MapBaker64.exe` before rebuilding: the executable is locked while
+it is running.
 
-| CMake option | Default | Effect |
-|---|---|---|
-| `WOWDECOMP_DISABLE_SIGNATURE_CHECKS` | `OFF` | Skip the MPQ file and `.toc.sig` signature checks, so modified game data and interface files load |
-| `WOWCLIENT_CRASH_LOG` | `ON` | Build `WowClient` with the crash logger |
-| `WOWCLIENT_OUTPUT_OVERRIDE` | empty | Name the `WowClient` executable something other than `WowClient64` / `WowClient32` |
+---
 
-## Running
+## Quick start: one tile
 
-1. Copy the `Data` folder of your 3.3.5a client into `bin/Win/`, so you have `bin/Win/Data/`.
-2. Point `Data/<locale>/realmlist.wtf` at the server you want to connect to.
-3. Start `bin/Win/WowClient64.exe` (or `Wow64.exe`).
+Linux/Wine (the client path is a Wine `Z:` path; `bake_parallel.py` converts paths for
+you, but the executable itself needs this form):
 
-## Layout
+```bash
+source Tools/MapBaker/linux/env.sh
+xvfb_start
+mkdir -p /path/to/out
+wine_mapbaker \
+  --client 'Z:\path\to\3.3.5a' \
+  --map 571 --tx 34 --ty 23 \
+  --px 1024 --ssaa 2 --preset map --light-elev 60 \
+  --layer wmo \
+  --out 'Z:\path\to\out'
+```
+
+Windows:
+
+```bat
+bin\Win\MapBaker64.exe --client C:\Games\3.3.5a ^
+  --map 571 --tx 34 --ty 23 ^
+  --px 1024 --ssaa 2 --preset map --light-elev 60 ^
+  --layer wmo --out C:\mapbaker\out
+```
+
+The four transparent layers (`wmo`, `trees`, `quads`) write RGBA PNGs. `terrain` and
+`combined` write RGB PNGs.
+
+---
+
+## Bake a continent in four layers
+
+Northrend 571, 1024 px/ADT, local storage. Adjust the grid for another map.
+
+```bash
+CLIENT=/path/to/3.3.5a
+ROOT=/path/to/mapbaker/northrend1024
+MAP=571
+TX0=11 TX1=49 TY0=9 TY1=37
+PX=1024
+EXE=bin/Win/MapBaker64.exe
+CACHE=/path/to/northrend.quadcache
+
+mkdir -p "$(dirname "$CACHE")"
+
+for layer in terrain wmo trees quads; do
+  extra="--light-elev 60 --layer $layer"
+  python3 Tools/MapBaker/bake_parallel.py \
+    --client "$CLIENT" --map "$MAP" \
+    --tx0 "$TX0" --tx1 "$TX1" --ty0 "$TY0" --ty1 "$TY1" \
+    --px "$PX" --ssaa 2 --workers 6 \
+    --out "$ROOT/tiles/$layer" \
+    --quad-cache "$CACHE" \
+    --exe "$EXE" \
+    --extra "$extra"
+done
+```
+
+Notes:
+
+- `bake_parallel.py` always selects the `map` preset and adds `--quads`. Passing a
+  shared `--quad-cache` means the WMO group table is collected once and reused by the
+  other layers and workers.
+- Each worker handles a contiguous band of ADT rows, so it streams the client data
+  locally and never shares the D3D device between threads.
+- `--skip-existing` is applied by the driver; rerunning bakes only missing tiles.
+- Output: `tiles/<layer>/tile_<tx>_<ty>.png`.
+
+---
+
+## Stitch the layers
+
+```bash
+ROOT=/path/to/mapbaker/northrend1024
+OUT=$ROOT/out
+MAP=571
+TX0=11 TX1=49 TY0=9 TY1=37
+PX=1024
+
+mkdir -p "$OUT"
+
+for layer in terrain wmo trees quads; do
+  alpha=""
+  [ "$layer" != terrain ] && alpha="--alpha"
+  python3 Tools/MapBaker/stitch.py \
+    --tiles "$ROOT/tiles/$layer" \
+    --out "$OUT" \
+    --name "northrend-$layer" \
+    --map-id "$MAP" \
+    --tx0 "$TX0" --tx1 "$TX1" --ty0 "$TY0" --ty1 "$TY1" \
+    --px "$PX" \
+    --background 1d3b5d \
+    --work "$ROOT/work-$layer" \
+    --row-jobs 6 --row-concurrency 2 \
+    --tiff-compression zstd --tiff-level 1 \
+    $alpha
+done
+```
+
+- `--alpha` writes a transparent background tile and PNG DZI tiles. Without it the
+  stitcher writes JPEG DZI tiles filled with `--background`.
+- The viewer needs a local OpenSeadragon build. Put it under `out/openseadragon/`
+  (the `stitch.py --osd <dir>` option can copy it while stitching):
+
+  ```bash
+  cp -r /path/to/openseadragon "$OUT/openseadragon"
+  ```
+- `zstd` level 1 is recommended for large masters: lossless, about 6.5× faster than
+  deflate and roughly 24% smaller on Northrend.
+- The work directory needs room for the row strips and the giant mosaic. Put it on a
+  local SSD, not a network share.
+
+Output per layer:
+
+```
+out/northrend-terrain.tif          # pyramidal BigTIFF master
+out/northrend-terrain.dzi          # DZI descriptor
+out/northrend-terrain_files/       # 512 px DZI tiles
+out/northrend-terrain-preview.jpg
+```
+
+The transparent layers use `.png` previews and PNG DZI tiles.
+
+---
+
+## Build the layer viewer
+
+```bash
+python3 Tools/MapBaker/make_layer_viewer.py \
+  --out /path/to/mapbaker/northrend1024/out \
+  --name northrend \
+  --map-id 571 \
+  --tx0 11 --ty0 9 \
+  --px 1024
+
+cd /path/to/mapbaker/northrend1024/out
+python3 -m http.server 8765 --bind 0.0.0.0
+```
+
+Open `http://localhost:8765/layer-viewer.html`.
+
+The page stacks the four DZIs and provides:
+
+- layer toggles that stay highlighted while active;
+- a minimap-quad opacity slider;
+- up/down reordering (for example, WMO above minimap quads);
+- a checkerboard when terrain is off;
+- an ADT/world-coordinate HUD.
+
+The layer viewer expects `openseadragon/` next to the DZIs; `stitch.py --osd <dir>`
+copies it during stitching if you prefer.
+
+---
+
+## Layers in detail
+
+### `terrain`
+
+The opaque base: terrain chunks, baked terrain normals/shadows, and ADT liquids. It
+does not include WMO, M2 or minimap art. The clear colour is the map background
+`#1d3b5d`.
+
+ADT water is flushed in both the opaque and transparent liquid passes; missing the
+second pass leaves lakebeds bare.
+
+### `wmo`
+
+Transparent WMO buildings plus every non-tree M2 prop. Terrain is rendered depth-only
+first so buildings behind hills are occluded; the colour pass then draws only the
+WMO/prop layer. Viewpoint-culled city districts are added back by the quad-fill path,
+so interiors are not left as bare terrain.
+
+Transient effect models (portals, fog, light rays, particles, ribbons) are excluded:
+their additive black backgrounds would otherwise become opaque black planes in an RGBA
+capture.
+
+### `trees`
+
+Common tree M2s only. Classification uses the model basename, not the directory name:
+
+- names containing `tree` are trees;
+- species-only names (`pine`, `oak`, `birch`, `aspen`, `palm`, …) match whole tokens;
+- world/unique trees (`worldtree`, `teldrassil`, `nordrassil`, `vordrassil`,
+  `ghanir`, …) are excluded;
+- bushes, logs, mushrooms, trunks, stumps, saplings, rocks, roots, vines, bridges and
+  similar props are excluded.
+
+The Northrend pilot classifies roughly 110 common tree models. The trees layer intentionally
+does not use a WMO depth pass: interior floors and ceilings would over-occlude the
+canopy. Trees are composited above terrain/WMO in the viewer.
+
+### `quads`
+
+The original 3.3.5a minimap artwork, drawn as raw per-cell textures with their own
+alpha. No shading or tint is applied. The WMO group table is collected once and can be
+reused through `--quad-cache`.
+
+### `combined`
+
+The original single-image path: terrain, WMO, M2 and minimap art in one opaque PNG.
+Useful as a reference and for comparison with the layered output.
+
+---
+
+## Look: lighting and water
+
+`--preset map` is tuned for map output:
+
+- flat light: fixed ambient `0.40` and diffuse `0.56`; the zone's colour cast is
+  ignored. `--light-elev 60` is the tuned sun elevation;
+- no sky, fog, weather or liquid specular;
+- flat ocean palette (`30,59,93`) instead of per-zone water colours;
+- opaque water, so the lakebed cannot tint adjacent ADTs differently;
+- water uses only the flat sun; zone M2-scene lights are skipped.
+
+This neutralises ADT-shaped seams. Zone-specific terrain normals and baked terrain
+shadows remain, because they are part of the map's look.
+
+Useful overrides:
+
+| option | effect |
+|---|---|
+| `--light-mode client` | keep zone light colours |
+| `--light-mode neutral` | desaturated zone light, keeping zone intensity |
+| `--light-mode desat --light-desat <0..1>` | partial desaturation |
+| `--light-mode flat` | fixed flat light (map default) |
+| `--water-mode client` | keep the client's per-zone water bands |
+| `--water-mode map` | flat ocean palette (map default) |
+| `--water-mode desat` | desaturate the client water bands |
+| `--gain <f>` | post-render brightness gain |
+| `--flat-light` | alias for `--light-elev 89` |
+
+---
+
+## Map IDs
+
+`Tools/MapBaker/maps-to-bake.md` contains the complete comma-separated list of normal
+maps players can enter: 91 IDs. The large continents are:
+
+- `0` Eastern Kingdoms
+- `1` Kalimdor
+- `530` Outland
+- `571` Northrend
+
+The list excludes test/development maps, transport/boat maps, unused maps and PvP
+barracks. Sort the list if a script needs ascending IDs.
+
+---
+
+## Performance
+
+Measured on the 8-core reference machine, local SATA SSD, 6 workers:
+
+| workload | result |
+|---|---|
+| Northrend 571, 1024 px/ADT, SSAA 2, per layer | ~30–36 s (1131 tiles) |
+| Northrend 571, 4096 px/ADT, SSAA 2, combined render | 292 s (1131 tiles) |
+| Northrend 4096 stitch, zstd-1 master | 383 s |
+| Northrend 4096 output | 13.27 GB BigTIFF + 5.3 GB DZI |
+
+4096 px/ADT with SSAA 2 renders into an 8192×8192 target, the practical D3D9 texture
+limit. For full-continent 4096 stitches, expect about 100 GB of transient work space.
+
+---
+
+## Repository layout
 
 | Path | Contents |
 |---|---|
-| `Engine/Source/` | Engine modules: Storm, Gx (Direct3D 9 / OpenGL), Model2, Frame/FrameXML UI, SoundEngine, Lua, ... |
-| `WoW/Source/` | Game modules: objects, world rendering, UI, networking, database, glue screens |
-| `WoW/Common/` | Code shared by the game modules |
-| `ThirdParty/` | Libraries linked from their upstream sources |
-| `Tools/WowClient/` | The `WowClient` executable target |
-| `Tools/XvidDecoder/` | x64 movie decoder that replaces the original 32-bit `DivxDecoder.dll` |
+| `Tools/MapBaker/` | Baker CLI, layer renderers, batch driver, stitcher, viewer generator |
+| `Tools/MapBaker/linux/` | Linux cross-build toolchain and Wine helpers |
+| `Engine/`, `WoW/` | Rendering stack used by the baker (Gx, Model2, world, liquids) |
+| `bin/Win/` | Built `MapBaker64.exe` |
 
-## Special thanks
+---
 
-- [binana](https://github.com/thunderbrewhq/binana)
-- [thunderbrew](https://github.com/thunderbrewhq/thunderbrew)
-- [whoa](https://github.com/whoahq/whoa)
-- TOMRUS, for the initial IDB
-- Everyone who has reported bugs so far
-- The WoW modding community
+## Caveats
+
+- A running `MapBaker64.exe` locks the executable; stop bakers before rebuilding.
+- Batch mode does not create `--out`; create the directory first.
+- WMO streaming is asynchronous. If a tile at the start of a long worker band looks
+  sparse, rebake it after a neighbouring tile so the area is loaded.
+- The stitcher's `--work` directory is much larger than the final output.
+- The layer viewer needs HTTP; opening the page through `file://` blocks DZI requests.
