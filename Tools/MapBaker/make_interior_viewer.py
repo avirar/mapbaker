@@ -95,7 +95,7 @@ HTML = r'''<!doctype html>
 <div id="hud">loading…</div>
 
 <script>
-const TX0=@TX0@, TY0=@TY0@, PX=@PX@, MAPID=@MAPID@;
+const TX0=@TX0@, TY0=@TY0@, PX=@PX@, MAPID=@MAPID@, FIT=@FIT@;
 const A=533.33331, O=17066.666;
 const LAYERS=[
   {id:'scene', file:'@NAME@-scene.dzi'},
@@ -160,7 +160,18 @@ function initOSD(){
         state.items[l.id]=ev.item;
         loaded++;
         applyLayer(l.id);
-        if (loaded===LAYERS.length) applyAll();
+        if (loaded===LAYERS.length) {
+          applyAll();
+          if (FIT) {
+            setTimeout(()=>{
+              const item=viewer.world.getItemAt(0);
+              if (!item) return;
+              const r=item.imageToViewportRectangle(
+                new OpenSeadragon.Rect(FIT[0],FIT[1],FIT[2],FIT[3]));
+              viewer.viewport.fitBounds(r, true);
+            }, 50);
+          }
+        }
       },
       error:ev=>{
         document.getElementById('err').textContent='Could not load '+l.file;
@@ -260,10 +271,14 @@ def main():
     ap.add_argument('--tx0', type=int, required=True)
     ap.add_argument('--ty0', type=int, required=True)
     ap.add_argument('--count', type=int, default=0)
+    ap.add_argument('--fit', default='', help='initial image-pixel fit: x,y,w,h')
     ap.add_argument('--px', type=int, default=1024)
     ap.add_argument('--title', default=None)
     args = ap.parse_args()
 
+    fit = 'null'
+    if args.fit:
+        fit = '[' + ','.join(x.strip() for x in args.fit.split(',')) + ']'
     title = args.title or ('%s — map %d' % (args.name, args.map_id))
     html = (HTML.replace('@NAME@', args.name)
                 .replace('@TITLE@', title)
@@ -271,6 +286,7 @@ def main():
                 .replace('@TX0@', str(args.tx0))
                 .replace('@TY0@', str(args.ty0))
                 .replace('@COUNT@', str(args.count))
+                .replace('@FIT@', fit)
                 .replace('@PX@', str(args.px)))
     path = os.path.join(args.out, 'viewer-interiors.html')
     with open(path, 'w', encoding='utf-8') as f:
