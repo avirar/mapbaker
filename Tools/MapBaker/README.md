@@ -122,9 +122,10 @@ terrain+WMO and the 2D art overlay**. Disable with `--no-quad-fill`.
 | `--dump-tiles` | dump the ADT grid from the WDT area table, then exit |
 | `--no-wmo` | terrain only |
 | `--light-elev <deg>` | sun elevation above the horizon (default: engine noon ~37°); `--flat-light` = 89 |
-| `--light-mode <client\|neutral\|desat\|flat>` | terrain light **colour**: `client` keeps `Light.dbc` zone colours; `neutral` luminance-gray; `desat` uses `--light-desat`; `flat` = neutral + `--light-elev 89` if no elevation was given. `map` preset defaults to **neutral**, `realistic` to `client`; explicit flags win |
+| `--light-mode <client\|neutral\|desat\|flat>` | light **colour/intensity**: `client` keeps `Light.dbc` zone colours; `neutral` luminance-gray with each zone's intensity; `desat` uses `--light-desat`; `flat` = neutral + fixed total intensity. `map` preset defaults to **flat**, `realistic` to `client`; explicit flags win. Covers terrain and `DayNight::m_light0/m_light1` (WMO/M2 lighting) |
 | `--light-desat <0..1>` | partial desaturation (implies `--light-mode desat`; `1` = neutral) |
-| `--ignore-zone-light` | alias for `--light-mode neutral` |
+| `--ignore-zone-light` | alias for `--light-mode flat` |
+| `--neutral-light` | alias for `--light-mode neutral` |
 | `--water-mode <client\|map\|desat>` | water **colour**: `client` keeps `LightIntBand` zone water; `map` uses one flat ocean palette `(30,59,93)` (map preset default); `desat` desaturates the client bands. The map palette is scaled by the neutral light intensity so every ADT matches |
 | `--gain <f>` | post-render brightness gain |
 | `--city-file <path>` / `--city-elev <deg>` | city ADT list + its sun elevation |
@@ -211,11 +212,12 @@ Outputs (Eastern Kingdoms example): `tiles/` (882 PNG), `ek1024.tif` (21,504 × 
   ~4,400.
 - The art cache is bounded (768 MB) and evicts wholesale when exceeded.
 - `--light-elev 60` is the tuned value for the baked minimap look; `map` preset = noon, no
-  fog/sky/weather, shadows/specular/detail doodads off. The `map` preset also uses neutral
-  terrain light by default: Northrend's `Light.dbc` zone records are strongly cyan and would
-  otherwise paint Borean Tundra/Dragonblight/Icecrown blue. Pass `--light-mode client` (or
-  `--light-desat <0..1>`) to restore the zone colours. Colour mode only changes ambient/
-  diffuse/specular colour; direction and elevation stay with `--light-elev`.
+  fog/sky/weather, shadows/specular/detail doodads off. The `map` preset uses **flat** light
+  by default: Northrend's `Light.dbc` zone records are strongly cyan and would otherwise paint
+  Borean Tundra/Dragonblight/Icecrown blue. Pass `--light-mode client` (or `--neutral-light`,
+  `--light-desat <0..1>`) to restore the zone colours. `flat` also normalises the total light
+  intensity, because WMOs/M2s are lit directly from `DayNight::m_light1` and would otherwise
+  change colour/brightness at an ADT border. Direction and elevation stay with `--light-elev`.
 - The client's per-zone water bands swing hard (Northrend: dark blue 16,40,76 → green
   52,76,64 → blue 29,58,93). The `map` preset therefore defaults to `--water-mode map`,
   which writes one flat ocean palette into `DayNight::DNInfo::m_bands.m_waterColors` and

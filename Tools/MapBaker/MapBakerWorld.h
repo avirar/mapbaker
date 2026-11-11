@@ -32,10 +32,12 @@ namespace MapBakerWorld {
     // dark streets).
     void SetLightElevation(float deg);
 
-    // Terrain light color mode. 0 = keep Light.dbc colors (client/realistic),
-    // 1 = fully neutral (luminance-preserving gray), 2 = desaturate by amount (0..1),
-    // -1 = preset default (map: neutral, realistic: client). Direction/elevation is
-    // still controlled by SetLightElevation; only ambient/diffuse color changes.
+    // Light colour/intensity mode. 0 = keep Light.dbc colors (client/realistic),
+    // 1 = neutral (luminance-preserving gray, per-zone intensity preserved),
+    // 2 = desaturate by amount (0..1), 3 = flat (neutral + fixed total intensity),
+    // -1 = preset default (map: flat, realistic: client). Covers CMap::s_mapLight and
+    // DayNight::m_light0/m_light1 (WMO/M2/doodad lighting). Direction/elevation is
+    // still controlled by SetLightElevation.
     void SetLightMode(int32_t mode, float amount);
 
     // Water colour mode. 0 = keep Light.dbc zone water bands (client/realistic),

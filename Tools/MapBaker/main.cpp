@@ -180,10 +180,12 @@ static void Usage() {
     printf("  --dump-tiles        dump the ADT grid (from the WDT area table), then exit\n");
     printf("  --no-wmo            skip WMO/building rendering (ground-floor look)\n");
     printf("  --light-elev <deg>  map-light elevation above horizon (default: engine noon ~37)\n");
-    printf("  --light-mode <m>    terrain light color: client | neutral | desat | flat\n");
-    printf("                      map preset default = neutral (flat white light); realistic = client\n");
+    printf("  --light-mode <m>    light: client | neutral | desat | flat\n");
+    printf("                      neutral = desaturated zone light; flat = neutral + fixed intensity\n");
+    printf("                      map preset default = flat; realistic = client\n");
     printf("  --light-desat <f>   desaturation 0..1 (implies --light-mode desat; 1 = neutral)\n");
-    printf("  --ignore-zone-light ignore Light.dbc color cast (alias for --light-mode neutral)\n");
+    printf("  --ignore-zone-light ignore zone light entirely (alias for --light-mode flat)\n");
+    printf("  --neutral-light     desaturated zone light, keeping each zone's intensity\n");
     printf("  --water-mode <m>    water colour: client | map | desat\n");
     printf("                      map preset default = map (fixed ocean palette), realistic = client\n");
     printf("  --gain <f>          post-render brightness gain (default 1.0)\n");
@@ -318,12 +320,10 @@ int main(int argc, char** argv) {
                 config.lightMode = 1;
                 config.lightDesat = 1.0f;
             } else if (!strcmp(mode, "flat")) {
-                // "flat" also means neutral color; keep the direction switch explicit.
-                config.lightMode = 1;
+                // Neutral colour plus fixed intensity; the sun elevation stays a separate
+                // switch (--light-elev / --flat-light).
+                config.lightMode = 3;
                 config.lightDesat = 1.0f;
-                if (config.lightElev < 0.0f) {
-                    config.lightElev = 89.0f;
-                }
             } else if (!strcmp(mode, "desat")) {
                 config.lightMode = 2;
             } else {
@@ -333,7 +333,10 @@ int main(int argc, char** argv) {
         } else if (!strcmp(argv[i], "--light-desat") && i + 1 < argc) {
             config.lightMode = 2;
             config.lightDesat = static_cast<float>(strtod(argv[++i], nullptr));
-        } else if (!strcmp(argv[i], "--ignore-zone-light") || !strcmp(argv[i], "--neutral-light")) {
+        } else if (!strcmp(argv[i], "--ignore-zone-light")) {
+            config.lightMode = 3;
+            config.lightDesat = 1.0f;
+        } else if (!strcmp(argv[i], "--neutral-light")) {
             config.lightMode = 1;
             config.lightDesat = 1.0f;
         } else if (!strcmp(argv[i], "--water-mode") && i + 1 < argc) {

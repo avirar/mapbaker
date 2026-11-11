@@ -150,48 +150,7 @@ namespace {
                         color.z + (luma - color.z) * amount);
     }
 
-    void ApplyLightColorMode() {
-        if (s_lightMode == 0 || !CMap::s_mapLight) {
-            return; // client Light.dbc colors
-        }
-
-        float amount = s_lightMode == 1 ? 1.0f : s_lightDesat;
-        if (amount <= 0.0f) {
-            return;
-        }
-        if (amount > 1.0f) {
-            amount = 1.0f;
-        }
-
-        CM2Light& light = CMap::s_mapLight->m_light;
-        light.m_ambColor = DesaturateLightColor(light.m_ambColor, amount);
-        light.m_dirColor = DesaturateLightColor(light.m_dirColor, amount);
-        light.m_specColor = DesaturateLightColor(light.m_specColor, amount);
-
-        if (getenv("MAPBAKER_DEBUG_LIGHT")) {
-            static int s_printed = 0;
-            if (s_printed < 4) {
-                s_printed++;
-                const DayNight::DNInfo* dn = DayNight::GetInfo();
-                fprintf(stderr,
-                        "MapBaker light: mode=%d amount=%.2f amb=(%.3f,%.3f,%.3f) "
-                        "dir=(%.3f,%.3f,%.3f) water=[%d,%d,%d | %d,%d,%d | %d,%d,%d | %d,%d,%d] "
-                        "fog=(%d,%d,%d) alpha=(%.2f,%.2f,%.2f,%.2f)\n",
-                        s_lightMode, amount,
-                        light.m_ambColor.x, light.m_ambColor.y, light.m_ambColor.z,
-                        light.m_dirColor.x, light.m_dirColor.y, light.m_dirColor.z,
-                        dn->m_bands.m_waterColors[0].r, dn->m_bands.m_waterColors[0].g, dn->m_bands.m_waterColors[0].b,
-                        dn->m_bands.m_waterColors[1].r, dn->m_bands.m_waterColors[1].g, dn->m_bands.m_waterColors[1].b,
-                        dn->m_bands.m_waterColors[2].r, dn->m_bands.m_waterColors[2].g, dn->m_bands.m_waterColors[2].b,
-                        dn->m_bands.m_waterColors[3].r, dn->m_bands.m_waterColors[3].g, dn->m_bands.m_waterColors[3].b,
-                        dn->m_fog.m_color.r, dn->m_fog.m_color.g, dn->m_fog.m_color.b,
-                        dn->m_bands.m_oceanShallowAlpha, dn->m_bands.m_oceanDeepAlpha,
-                        dn->m_bands.m_waterShallowAlpha, dn->m_bands.m_waterDeepAlpha);
-            }
-        }
-    }
-
-    CImVector DesaturateWaterColor(const CImVector& color, float amount) {
+    CImVector DesaturateImVector(const CImVector& color, float amount) {
         const float luma = 0.2126f * color.r + 0.7152f * color.g + 0.0722f * color.b;
         const auto mix = [&](uint8_t channel) {
             const float v = channel + (luma - channel) * amount;
@@ -203,6 +162,102 @@ namespace {
         out.g = mix(color.g);
         out.b = mix(color.b);
         return out;
+    }
+
+    void SetFlatDnLight(DNLightState& light, uint8_t ambient, uint8_t diffuse) {
+        light.m_ambient.a = 0xFF;
+        light.m_ambient.r = ambient;
+        light.m_ambient.g = ambient;
+        light.m_ambient.b = ambient;
+        light.m_diffuse.a = 0xFF;
+        light.m_diffuse.r = diffuse;
+        light.m_diffuse.g = diffuse;
+        light.m_diffuse.b = diffuse;
+        // WMO mode 2 uses m_mid0 as diffuse and m_mid1 as ambient.
+        light.m_mid0 = light.m_diffuse;
+        light.m_mid1 = light.m_ambient;
+    }
+
+    // DayNight::DNLightState is the light source WMOs, M2s and doodads use directly
+    // (CMapObjGroup::SetLighting reads m_light1, World.cpp:SetEmissiveAmbient reads
+    // m_light1.m_ambient). It is rebuilt from the camera's zone every tile, so leaving
+    // it untouched makes the same WMO change colour at an ADT border.
+    void NeutralizeDnLight(DNLightState& light, float amount) {
+        light.m_ambient = DesaturateImVector(light.m_ambient, amount);
+        light.m_diffuse = DesaturateImVector(light.m_diffuse, amount);
+        light.m_mid0 = DesaturateImVector(light.m_mid0, amount);
+        light.m_mid1 = DesaturateImVector(light.m_mid1, amount);
+    }
+
+    void ApplyLightColorMode() {
+        if (s_lightMode == 0 || !CMap::s_mapLight) {
+            return; // client Light.dbc colors
+        }
+
+        // Flat mode: ignore the zone light entirely. Scaling the zone's ambient/diffuse
+        // pair to a fixed sum is not enough: zones split that sum differently, and WMOs
+        // shade with ambient + diffuse*NdotL, so the same WMO still changes at an ADT
+        // border. Use fixed ambient/diffuse values for both the terrain light and the
+        // DayNight lights WMOs/M2s read directly.
+        const float kFlatAmbient = 0.40f;
+        const float kFlatDiffuse = 0.56f;
+        const uint8_t kFlatAmbientByte = 102;
+        const uint8_t kFlatDiffuseByte = 143;
+
+        const bool flat = s_lightMode == 3;
+        float amount = (s_lightMode == 1 || flat) ? 1.0f : s_lightDesat;
+        if (!flat && amount <= 0.0f) {
+            return;
+        }
+        if (amount > 1.0f) {
+            amount = 1.0f;
+        }
+
+        CM2Light& light = CMap::s_mapLight->m_light;
+        if (flat) {
+            light.m_ambColor = C3Vector(kFlatAmbient, kFlatAmbient, kFlatAmbient);
+            light.m_dirColor = C3Vector(kFlatDiffuse, kFlatDiffuse, kFlatDiffuse);
+            light.m_specColor = C3Vector(0.0f, 0.0f, 0.0f);
+        } else {
+            light.m_ambColor = DesaturateLightColor(light.m_ambColor, amount);
+            light.m_dirColor = DesaturateLightColor(light.m_dirColor, amount);
+            light.m_specColor = DesaturateLightColor(light.m_specColor, amount);
+        }
+
+        DayNight::DNInfo* dn = DayNight::GetInfo();
+        if (dn) {
+            if (flat) {
+                SetFlatDnLight(dn->m_light0, kFlatAmbientByte, kFlatDiffuseByte);
+                SetFlatDnLight(dn->m_light1, kFlatAmbientByte, kFlatDiffuseByte);
+            } else {
+                NeutralizeDnLight(dn->m_light0, amount);
+                NeutralizeDnLight(dn->m_light1, amount);
+            }
+        }
+
+        if (getenv("MAPBAKER_DEBUG_LIGHT")) {
+            static int s_printed = 0;
+            if (s_printed < 4) {
+                s_printed++;
+                fprintf(stderr,
+                        "MapBaker light: mode=%d amount=%.2f amb=(%.3f,%.3f,%.3f) "
+                        "dir=(%.3f,%.3f,%.3f) dn1_amb=(%d,%d,%d) dn1_dir=(%d,%d,%d) "
+                        "water=[%d,%d,%d | %d,%d,%d | %d,%d,%d | %d,%d,%d] "
+                        "fog=(%d,%d,%d) alpha=(%.2f,%.2f,%.2f,%.2f)\n",
+                        s_lightMode, amount,
+                        light.m_ambColor.x, light.m_ambColor.y, light.m_ambColor.z,
+                        light.m_dirColor.x, light.m_dirColor.y, light.m_dirColor.z,
+                        dn->m_light1.m_ambient.r, dn->m_light1.m_ambient.g, dn->m_light1.m_ambient.b,
+                        dn->m_light1.m_diffuse.r, dn->m_light1.m_diffuse.g, dn->m_light1.m_diffuse.b,
+                        dn->m_bands.m_waterColors[0].r, dn->m_bands.m_waterColors[0].g, dn->m_bands.m_waterColors[0].b,
+                        dn->m_bands.m_waterColors[1].r, dn->m_bands.m_waterColors[1].g, dn->m_bands.m_waterColors[1].b,
+                        dn->m_bands.m_waterColors[2].r, dn->m_bands.m_waterColors[2].g, dn->m_bands.m_waterColors[2].b,
+                        dn->m_bands.m_waterColors[3].r, dn->m_bands.m_waterColors[3].g, dn->m_bands.m_waterColors[3].b,
+                        dn->m_fog.m_color.r, dn->m_fog.m_color.g, dn->m_fog.m_color.b,
+                        dn->m_bands.m_oceanShallowAlpha, dn->m_bands.m_oceanDeepAlpha,
+                        dn->m_bands.m_waterShallowAlpha, dn->m_bands.m_waterDeepAlpha);
+            }
+        }
     }
 
     void ApplyWaterColorMode() {
@@ -262,7 +317,7 @@ namespace {
             }
             for (int32_t i = 0; i < 4; i++) {
                 info->m_bands.m_waterColors[i] =
-                    DesaturateWaterColor(info->m_bands.m_waterColors[i], amount);
+                    DesaturateImVector(info->m_bands.m_waterColors[i], amount);
             }
         }
 
@@ -893,7 +948,9 @@ namespace MapBakerWorld {
         // minimap; realistic keeps the client's Light.dbc zone colors. An explicit
         // --light-mode / --light-desat overrides this.
         if (s_lightMode < 0) {
-            s_lightMode = (preset == Preset_Map) ? 1 : 0;
+            // Flat (neutral colour + fixed intensity) is the map default so WMOs, M2s and
+            // terrain all use the same light in every ADT.
+            s_lightMode = (preset == Preset_Map) ? 3 : 0;
         }
         if (s_waterMode < 0) {
             // Client terrain light implies client water; otherwise the map palette.

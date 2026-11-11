@@ -570,6 +570,14 @@ static void SetShaderFogFromDayNight(int32_t mode) {
         return;
     }
 
+    // Respect the global fog master switch. MapBaker disables fog for the map preset, but
+    // WMO/M2 materials set shader fog directly here; without this check each ADT's fog
+    // colour (e.g. Zul'drak teal) tints the same WMO differently on either side of a border.
+    if (!g_theGxDevicePtr->MasterEnable(GxMasterEnable_Fog)) {
+        CShaderEffect::SetFogEnabled(0);
+        return;
+    }
+
     DayNight::DNInfo* info = DayNight::GetInfo();
     DNFogInfo* fog = (mode & 0x2) ? &info->m_fog : &info->m_fogInterior;
     CImVector black;

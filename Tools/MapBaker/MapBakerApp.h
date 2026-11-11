@@ -18,7 +18,8 @@ namespace MapBakerApp {
         bool noWmo;              // skip WMO/building rendering (ground-floor look)
         float lightElev;         // map-light elevation in degrees (-1 = engine default noon)
         // 0 = client/Light.dbc colors, 1 = neutral (luminance gray), 2 = desaturate,
-        // -1 = preset default (map: neutral, realistic: client).
+        // 3 = flat (neutral + fixed intensity), -1 = preset default (map: flat,
+        // realistic: client).
         int32_t lightMode;
         float lightDesat;        // 0..1, used by lightMode 2; neutral is 1.0
         // 0 = client Light.dbc water bands, 1 = fixed map-ocean palette,
