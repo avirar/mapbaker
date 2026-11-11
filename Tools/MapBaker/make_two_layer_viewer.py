@@ -200,6 +200,14 @@ function initOSD(){
     try { document.execCommand('copy'); } catch(e) {}
     ta.remove();
   }
+  document.querySelectorAll('.toggle[data-layer]').forEach(b=>{
+    b.addEventListener('click',()=>setVisible(b.dataset.layer,!state.visible[b.dataset.layer]));
+  });
+  document.getElementById('qopacity').addEventListener('input',e=>{
+    state.quadsOpacity=Number(e.target.value)/100;
+    state.visible.quads = state.quadsOpacity>0;
+    applyLayer('quads'); updateButtons();
+  });
   document.getElementById('t-cross').addEventListener('click',()=>{
     state.crosshair=!state.crosshair; updateButtons();
   });
