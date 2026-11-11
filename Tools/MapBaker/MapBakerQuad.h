@@ -82,8 +82,10 @@ extern int32_t MapBakerWaitTextures;
 extern int32_t MapBakerM2Filter;
 extern uint8_t MapBakerFlatWaterLight;
 extern uint8_t MapBakerInteriorOnly;
+extern uint8_t MapBakerForcePortals;
 bool MapBakerM2IsTree(const char* fileName);
 bool MapBakerM2IsEffect(const char* fileName);
+void MapBakerRenderAllPortals();
 // Flat tint per class (RGB 0-255) and a shared alpha (0-255). Exterior vs interior get
 // different colors so the user can see the classification while curating.
 extern uint8_t MapBakerQuadExtColor[3];

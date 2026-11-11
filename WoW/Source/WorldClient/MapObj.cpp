@@ -52,6 +52,7 @@
 #include "WoW/Source/WorldClient/MapLight.h"
 #include "WoW/Source/WorldClient/MapObjDef.h"
 #include "WoW/Source/WorldClient/MapObjGroup.h"
+#include "Tools/MapBaker/MapBakerQuad.h"
 #include "WoW/Source/WorldClient/MapRenderChunk.h"
 #include "WoW/Source/WorldClient/Types.h"
 #include "WoW/Source/WorldClient/World.h"
@@ -1196,6 +1197,32 @@ void CMapObj::RenderThruPortals(uint32_t groupNum, uint32_t fromGroup, CRect& nd
     }
 
     if (!group->m_portalCount) {
+        return;
+    }
+
+    // MapBaker: a top-down camera is outside the WMO, so the normal portal side
+    // test rejects every interior view. Walk all portal links instead; the render
+    // callback queues each destination group for the current tile.
+    if (MapBakerForcePortals || getenv("MAPBAKER_FORCE_PORTALS")) {
+        static uint8_t s_forceVisited[512];
+        if (depth == 0) {
+            memset(s_forceVisited, 0, sizeof(s_forceVisited));
+        }
+        if (groupNum < sizeof(s_forceVisited)) {
+            if (s_forceVisited[groupNum]) {
+                return;
+            }
+            s_forceVisited[groupNum] = 1;
+        }
+
+        SMOPortalRef* ref = &this->m_portalRefList[group->m_portalStart];
+        for (uint32_t i = 0; i < group->m_portalCount; i++, ref++) {
+            const uint32_t destGroup = ref->m_groupIndex;
+            if (destGroup == 0xFFFF || destGroup == fromGroup) {
+                continue;
+            }
+            this->RenderThruPortals(destGroup, groupNum, ndcRect, depth + 1, interior);
+        }
         return;
     }
 

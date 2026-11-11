@@ -3452,6 +3452,50 @@ static void MapBakerAddMissingGroupsToSortTable() {
     s_curGroupIsInterior = 0;
 }
 
+// Seed portal views for a top-down map: the normal path only creates them while
+// culling from a viewpoint inside the WMO. Walk every exterior group and ask it
+// to traverse its portals, then let RenderPortalList draw the resulting views.
+void MapBakerRenderAllPortals() {
+    MapBakerForcePortals = 1;
+    CRect full;
+    full.minX = 0.0f;
+    full.minY = 0.0f;
+    full.maxX = 1.0f;
+    full.maxY = 1.0f;
+
+    const int32_t savedFrustum = CWorldScene::frustumIndex;
+
+    for (CMapObjDef* def = CMap::mapObjDefHash.m_fulllist.Head(); def;
+            def = CMap::mapObjDefHash.m_fulllist.Next(def)) {
+        if (!def->m_owner || !def->m_owner->m_isGroupLoaded) {
+            continue;
+        }
+
+        const uint32_t count = (def->m_defGroups.m_count == 0xFFFFFFFF)
+                ? def->m_defGroups.m_dynamic.m_count : def->m_defGroups.m_count;
+
+        for (uint32_t i = 0; i < count && i < 512; i++) {
+            CMapObjDefGroup* defGroup = def->m_defGroups[i];
+            if (!defGroup) {
+                continue;
+            }
+            CMapObjGroup* group = def->m_owner->GetGroup(defGroup->m_groupNum, 0);
+            if (!group || !group->m_portalCount) {
+                continue;
+            }
+            if (!(def->m_owner->GetGroupFlags(defGroup->m_groupNum) & 0x8)) {
+                continue;
+            }
+            // This is the normal exterior portal path: it sets the group render
+            // callback, traverses portals and queues destination groups for drawing.
+            def->CullMapObjDefGroupFromExterior(defGroup, &full, 1);
+        }
+    }
+
+    CWorldScene::frustumIndex = savedFrustum;
+    MapBakerForcePortals = 0;
+}
+
 // VERIFY: a040cfec manual (MapBaker: x-ray gating added)
 // OFFSET: 0x007964A0
 void CWorldScene::RenderMapObjDefGroups() {

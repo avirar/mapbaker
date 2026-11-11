@@ -71,6 +71,7 @@ uint8_t MapBakerQuadWmoUnder = 0;
 uint8_t MapBakerQuadFill = 1;
 uint8_t MapBakerFlatWaterLight = 0;
 uint8_t MapBakerInteriorOnly = 0;
+uint8_t MapBakerForcePortals = 0;
 int32_t MapBakerWaitTextures = 0;
 int32_t MapBakerM2Filter = 0;
 
@@ -655,6 +656,10 @@ namespace {
             CWorldScene::RenderChunks();
         }
         if (!s_noWmo && !s_quadWmoSuppress && !getenv("MAPBAKER_SKIP_WMO")) {
+            if (!getenv("MAPBAKER_SKIP_PORTALS") &&
+                    (CMap::bDungeon || getenv("MAPBAKER_FORCE_WMO"))) {
+                MapBakerRenderAllPortals();
+            }
             CWorldScene::RenderMapObjDefGroups();
         }
 
