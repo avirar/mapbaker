@@ -195,7 +195,8 @@ def make_index(args, records):
  .body span{color:#7f96ab;font-size:11px}
 </style></head><body>
 <h1>MapBaker — final maps</h1>
-<div class="sub">Scene + minimap quads · continents 1024 px/ADT · instances 4096 px/ADT</div>
+<div class="sub">Scene + minimap quads · continents 1024 px/ADT · instances 4096 px/ADT<br>
+<a href="remaster/index.html" style="color:#9fd0ff">Interior remaster gallery →</a></div>
 <div class="grid">
 @CARDS@
 </div>
