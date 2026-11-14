@@ -202,6 +202,33 @@ Deleting the file forces a fresh collection.
 
 ---
 
+## Final delivery pipeline
+
+The four-layer delivery is built from the inventory manifest:
+
+```bash
+# stock outdoor minimap tiles -> <slug>-quads-ext.dzi
+python Tools/MapBaker/bake_quads_ext.py --manifest <manifest.json> --root <delivery> \
+    --client <client> --exe bin/Win/MapBaker64.exe --workers 4
+
+# corrected open-world interior remaster (0/1/530/571)
+python Tools/MapBaker/bake_interiors_openworld.py --manifest <manifest.json> \
+    --root <delivery> --client <client> --exe bin/Win/MapBaker64.exe --workers 3
+
+# per-group stock interior art for instance/battleground viewers
+python Tools/MapBaker/dump_interior_art.py --manifest <manifest.json> --root <delivery> \
+    --client <client> --exe bin/Win/MapBaker64.exe --workers 4
+
+# unified four-layer viewers + /remaster/ gallery
+python Tools/MapBaker/make_final_viewers.py
+```
+
+`stitch.py` intentionally no longer writes `viewer.html` unless `--viewer` is passed;
+otherwise a layer stitch would overwrite the unified viewer. The final index is written
+by `bake_all.py --skip-bake --skip-stitch`.
+
+---
+
 ## Stitching (`Tools/MapBaker/stitch.py`)
 
 Requires libvips 8.x. Steps: background-filled row
