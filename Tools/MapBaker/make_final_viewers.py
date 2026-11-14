@@ -53,6 +53,13 @@ def main():
             has_ext = 1 if float(a.mean()) > 0.5 else 0
         except Exception:
             has_ext = 0
+        has_int = 0
+        try:
+            int_preview = os.path.join(out, slug + '-quads-int-preview.png')
+            a = np.asarray(Image.open(int_preview).convert('RGBA'))[:, :, 3]
+            has_int = 1 if float(a.mean()) > 0.5 else 0
+        except Exception:
+            has_int = 0
         has_groups = 0
         try:
             jpath = os.path.join(out, 'interior-art.json')
@@ -100,7 +107,8 @@ def main():
                '--out', out, '--name', slug, '--map-id', str(mid),
                '--tx0', str(tx0), '--ty0', str(ty0), '--count', str(count),
                '--px', str(px), '--title', title,
-               '--has-ext', str(has_ext), '--has-groups', str(has_groups)]
+               '--has-ext', str(has_ext), '--has-int', str(has_int),
+               '--has-groups', str(has_groups)]
         if fit:
             cmd += ['--fit', fit]
         p = subprocess.run(cmd, capture_output=True, text=True)

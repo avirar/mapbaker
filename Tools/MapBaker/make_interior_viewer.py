@@ -171,13 +171,13 @@ HTML = r'''<!doctype html>
 
 <script>
 const TX0=@TX0@, TY0=@TY0@, PX=@PX@, MAPID=@MAPID@, FIT=@FIT@, INSTANCE=@INSTANCE@;
-const HAS_EXT=@HAS_EXT@, HAS_GROUPS=@HAS_GROUPS@;
+const HAS_EXT=@HAS_EXT@, HAS_INT=@HAS_INT@, HAS_GROUPS=@HAS_GROUPS@;
 const A=533.33331, O=17066.666;
 const LAYERS=[
   {id:'scene', file:'@NAME@-scene.dzi'},
   {id:'interiors', file:'@NAME@-interiors.dzi'},
   ...(HAS_EXT ? [{id:'quads-ext', file:'@NAME@-quads-ext.dzi'}] : []),
-  {id:'quads-int', file:'@NAME@-quads-int.dzi'}
+  ...(HAS_INT ? [{id:'quads-int', file:'@NAME@-quads-int.dzi'}] : [])
 ];
 const DEFAULTS={scene:true,interiors:true,'quads-ext':false,'quads-int':false};
 const state={
@@ -456,6 +456,10 @@ function initOSD(){
     $('t-quads-ext').parentElement.style.display='none';
     $('qextopacity').parentElement.style.display='none';
   }
+  if (!HAS_INT) {
+    $('t-quads-int').parentElement.style.display='none';
+    $('qintopacity').parentElement.style.display='none';
+  }
   LAYERS.forEach((l,index)=>{
     viewer.addTiledImage({
       tileSource:l.file, index:index,
@@ -575,6 +579,8 @@ def main():
                     help='show the per-group tunnel x-ray panel (default: auto by map id)')
     ap.add_argument('--has-ext', type=int, default=1,
                     help='the map has stock outdoor minimap tiles (default 1)')
+    ap.add_argument('--has-int', type=int, default=1,
+                    help='the map has stock interior minimap cells (default 1)')
     ap.add_argument('--has-groups', type=int, default=1,
                     help='interior-art.json exists and has groups (default 1)')
     args = ap.parse_args()
@@ -598,6 +604,7 @@ def main():
                 .replace('@FIT@', fit)
                 .replace('@INSTANCE@', str(instance))
                 .replace('@HAS_EXT@', '1' if args.has_ext else '0')
+                .replace('@HAS_INT@', '1' if args.has_int else '0')
                 .replace('@HAS_GROUPS@', '1' if args.has_groups else '0')
                 .replace('@PX@', str(args.px)))
     out = args.out
