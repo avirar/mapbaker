@@ -184,13 +184,13 @@ def make_index(args, records):
     default_href = ''
     for c in cards:
         if c[0] == 550:
-            default_href = '%s/out/viewer-interiors.html' % c[2]
+            default_href = '%s/out/viewer.html' % c[2]
             break
     if not default_href and cards:
         default_href = '%s/out/viewer.html' % cards[0][2]
     options = []
     for c in cards:
-        href = '%s/out/viewer-interiors.html' % c[2]
+        href = '%s/out/viewer.html' % c[2]
         selected = ' selected' if href == default_href else ''
         options.append('<option value="%s"%s>%s</option>' % (href, selected, c[1]))
 
@@ -214,7 +214,7 @@ def make_index(args, records):
  #frame{display:block;width:100%;height:68vh;border:0;background:#0b1620}
 </style></head><body>
 <h1>MapBaker — final maps</h1>
-<div class="sub">Scene + minimap quads · continents 1024 px/ADT · instances 4096 px/ADT<br>
+<div class="sub">Scene + interior remaster + stock exterior/interior minimap quads · continents 1024 px/ADT · instances 4096 px/ADT<br>
 <a href="remaster/index.html" style="color:#9fd0ff">Interior remaster gallery →</a></div>
 <div class="hero">
  <div class="herobar">

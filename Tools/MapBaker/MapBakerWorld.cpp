@@ -949,6 +949,55 @@ namespace {
         }
     }
 
+    // Composite the stock outdoor minimap tile: the client's outdoor minimap is built
+    // from one Textures\Minimap\<dir>\map<tx>_<ty>.blp image per ADT, not from WMO art
+    // cells. Draw it into the RGBA buffer, scaled to the requested tile size (bilinear,
+    // matching the client's linear filtering). m_px is BGRA, destination is RGBA.
+    void CompositeTerrainMinimap(uint8_t* rgba, uint32_t size, const char* mapDirectory,
+                                 int32_t tx, int32_t ty) {
+        if (!rgba || !size || !mapDirectory) {
+            return;
+        }
+        const MapBakerTerrainImage* image = MapBakerTerrainGet(mapDirectory, tx, ty);
+        if (!image || !image->m_px || image->m_w <= 0 || image->m_h <= 0) {
+            return;
+        }
+        const int32_t w = image->m_w;
+        const int32_t h = image->m_h;
+        const float scaleX = static_cast<float>(w) / static_cast<float>(size);
+        const float scaleY = static_cast<float>(h) / static_cast<float>(size);
+        for (uint32_t y = 0; y < size; y++) {
+            float sy = (static_cast<float>(y) + 0.5f) * scaleY - 0.5f;
+            if (sy < 0.0f) sy = 0.0f;
+            if (sy > static_cast<float>(h - 1)) sy = static_cast<float>(h - 1);
+            const int32_t y0 = static_cast<int32_t>(sy);
+            const int32_t y1 = (y0 + 1 < h) ? y0 + 1 : y0;
+            const float fy = sy - static_cast<float>(y0);
+            uint8_t* row = rgba + static_cast<size_t>(y) * size * 4;
+            for (uint32_t x = 0; x < size; x++) {
+                float sx = (static_cast<float>(x) + 0.5f) * scaleX - 0.5f;
+                if (sx < 0.0f) sx = 0.0f;
+                if (sx > static_cast<float>(w - 1)) sx = static_cast<float>(w - 1);
+                const int32_t x0 = static_cast<int32_t>(sx);
+                const int32_t x1 = (x0 + 1 < w) ? x0 + 1 : x0;
+                const float fx = sx - static_cast<float>(x0);
+                const uint8_t* p00 = image->m_px + (static_cast<size_t>(y0) * w + x0) * 4;
+                const uint8_t* p10 = image->m_px + (static_cast<size_t>(y0) * w + x1) * 4;
+                const uint8_t* p01 = image->m_px + (static_cast<size_t>(y1) * w + x0) * 4;
+                const uint8_t* p11 = image->m_px + (static_cast<size_t>(y1) * w + x1) * 4;
+                uint8_t* p = row + static_cast<size_t>(x) * 4;
+                for (int32_t c = 0; c < 3; c++) {
+                    const float l0 = p00[c] * (1.0f - fx) + p10[c] * fx;
+                    const float l1 = p01[c] * (1.0f - fx) + p11[c] * fx;
+                    const float v = l0 * (1.0f - fy) + l1 * fy;
+                    // source bytes are b,g,r; destination is r,g,b.
+                    p[2 - c] = static_cast<uint8_t>(v + 0.5f);
+                }
+                p[3] = 255;
+            }
+        }
+    }
+
     // Composite the REAL minimap art (Textures\Minimap\<wmo>_<grp>_<x>_<y>.blp cells,
     // see MapBakerArt.h) over the terrain readback.
     //
@@ -1151,7 +1200,10 @@ namespace {
 }
 
 namespace MapBakerWorld {
+    static char s_mapDirectory[260] = {};
+
     bool LoadMap(const char* directory, int32_t mapId) {
+        SStrCopy(s_mapDirectory, directory ? directory : "", sizeof(s_mapDirectory));
         // Offline render: liquid materials must not depend on async texture warm-up
         // (the water shaders return early until the animated set is loaded).
         MapBakerWaitTextures = 1;
@@ -1404,7 +1456,12 @@ namespace MapBakerWorld {
                 MapBakerRenderAllPortals();
             }
             CWorldScene::RenderMapObjDefGroups();
-            RenderM2AndDetails(camPos, false);
+            // Open-world interiors are the stock WMO interior quads only. M2 props
+            // (crates, carts, lamps, etc.) are outdoor/detail objects and are not part
+            // of that set. Instances keep their approved interior props.
+            if (CMap::bDungeon) {
+                RenderM2AndDetails(camPos, false);
+            }
             MapBakerM2Filter = 0;
             MapBakerInteriorOnly = 0;
         } else {  // common trees only
@@ -1422,11 +1479,21 @@ namespace MapBakerWorld {
         float centerX = 0.0f, centerY = 0.0f;
         TileWorldCenter(tx, ty, &centerX, &centerY);
 
-        // Quads-only layer: 2D minimap art on a transparent background. No 3D pass.
+        // Quads-only layer: 2D WMO interior art on a transparent background. No 3D pass.
         if (layer == 4) {
             const uint32_t n = s_rtSize;
             std::vector<uint8_t> full(static_cast<size_t>(n) * n * 4, 0);
             CompositeArt(full.data(), n, centerX, centerY, true);
+            BoxDownsampleRgba(full.data(), static_cast<int32_t>(n), static_cast<int32_t>(n),
+                              out, sizePx, sizePx);
+            return true;
+        }
+
+        // Stock outdoor minimap layer: one client map<tx>_<ty>.blp per ADT. No 3D pass.
+        if (layer == 7) {
+            const uint32_t n = s_rtSize;
+            std::vector<uint8_t> full(static_cast<size_t>(n) * n * 4, 0);
+            CompositeTerrainMinimap(full.data(), n, s_mapDirectory, tx, ty);
             BoxDownsampleRgba(full.data(), static_cast<int32_t>(n), static_cast<int32_t>(n),
                               out, sizePx, sizePx);
             return true;

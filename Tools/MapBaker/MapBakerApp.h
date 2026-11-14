@@ -35,7 +35,8 @@ namespace MapBakerApp {
         float xraySkipAbove;     // trick-model guard: skip gated WMOs this high above the
                                  // street AND floating above it (0 = off)
         uint32_t xrayDump;       // 1 = dump the per-WMO table at first sight
-        int32_t layer;           // 0 = combined, 1 = terrain, 2 = WMO, 3 = trees, 4 = quads
+        int32_t layer;           // 0 = combined, 1 = terrain, 2 = WMO, 3 = trees, 4 = quads,
+                                 // 5 = scene, 6 = interiors, 7 = stock outdoor minimap
         bool quads;              // 2D WMO quad overlay (collect group footprints + composite)
         bool quadArt;            // draw the real per-cell minimap .blp art (default) vs flat tints
         bool quadWmo;            // also render the 3D WMO underneath the quads (hybrid)
@@ -43,6 +44,7 @@ namespace MapBakerApp {
         float quadAlpha;         // quad alpha, 0..1 (default ~0.63)
         uint32_t quadSel;        // bulk selection: 0 none, 1 all, 2 exterior (default), 3 interior
         const char* quadDump;    // optional: write the collected group table to this file
+        bool dumpInteriorArt;    // write per-group stock interior art JSON + PNG cells, then exit
         bool forceWmo;           // force-load all WMO groups (instances with ADT terrain)
         bool skipExisting;       // skip tiles whose PNG already exists (resume / parallel workers)
         const char* tileListFile; // optional text file of "tx ty" lines (parallel worker assignment)

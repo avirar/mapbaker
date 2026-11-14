@@ -7,6 +7,7 @@
 #include <cstring>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "Engine/Source/BLPFile/blp.h"
 #include "Engine/Source/BlizzardCore/SFile2-Core.h"
@@ -17,10 +18,14 @@ uint8_t MapBakerArtAlpha = 255;
 
 namespace {
     std::unordered_map<std::string, std::string> s_trs;  // lower-case name -> md5 file name
+    // "base|group" for every WMO minimap cell in the trs. Used to decide which WMO
+    // groups have stock interior minimap art (the interior remaster's group filter).
+    std::unordered_set<std::string> s_artGroups;
     bool s_trsTried = false;
     bool s_trsLoaded = false;
 
     std::unordered_map<std::string, MapBakerArtImage> s_cache;
+    std::unordered_map<std::string, MapBakerTerrainImage> s_terrainCache;
     size_t s_cacheBytes = 0;
     // A continent's worth of distinct cells can run to hundreds of MB. The old 768 MB
     // bound evicted the cache mid-mosaic (wholesale delete of m_px) and could invalidate
@@ -63,6 +68,28 @@ namespace {
         return s;
     }
 
+    // Instance WMOs often ship as "*_instance.wmo" while the stock minimap art uses the
+    // plain basename. Returns the stripped base, or an empty string when there is no
+    // instance suffix.
+    std::string InstanceStrippedBase(const std::string& base) {
+        const size_t us = base.rfind('_');
+        if (us == std::string::npos) {
+            return std::string();
+        }
+        const std::string tail = Lower(base.substr(us + 1));
+        bool instanceSuffix = (tail == "instance");
+        if (!instanceSuffix && tail.rfind("instance", 0) == 0) {
+            instanceSuffix = true;
+            for (size_t k = 8; k < tail.size(); k++) {
+                if (!std::isdigit(static_cast<unsigned char>(tail[k]))) {
+                    instanceSuffix = false;
+                    break;
+                }
+            }
+        }
+        return instanceSuffix ? base.substr(0, us) : std::string();
+    }
+
     // Cell texture selection, copied from CMapObj::GetMinimapQuads (MapObj.cpp):
     // texel = 0.5 world units, texels per cell = 2^ceil(log2(extent*256)) clamped 32..256.
     uint32_t CellTexels(float extent) {
@@ -79,6 +106,40 @@ namespace {
         const int32_t ceilExp = static_cast<int32_t>(std::ceil(exponent));
         const uint32_t p = 1u << ceilExp;
         return p < 32 ? 32 : (p > 256 ? 256 : p);
+    }
+
+    bool DecodeTrsKey(const std::string& trsKeyLower, MapBakerArtImage* out) {
+        out->m_w = 0;
+        out->m_h = 0;
+        out->m_px = nullptr;
+        auto it = s_trs.find(trsKeyLower);
+        if (it == s_trs.end() || it->second.empty()) {
+            return false;
+        }
+        const std::string path = std::string("Textures\\Minimap\\") + it->second;
+        CBLPFile blp;
+        if (!blp.Open(path.c_str(), 1)) {
+            return false;
+        }
+        uint8_t* pixels = nullptr;
+        uint32_t stride = 0;
+        if (blp.Lock(PIXEL_ARGB8888, 0, pixels, stride) && pixels) {
+            const int32_t w = static_cast<int32_t>(blp.Width(0));
+            const int32_t h = static_cast<int32_t>(blp.Height(0));
+            if (w > 0 && h > 0) {
+                out->m_w = w;
+                out->m_h = h;
+                out->m_px = new uint8_t[static_cast<size_t>(w) * h * 4];
+                for (int32_t y = 0; y < h; y++) {
+                    memcpy(out->m_px + static_cast<size_t>(y) * w * 4,
+                           pixels + static_cast<size_t>(y) * stride,
+                           static_cast<size_t>(w) * 4);
+                }
+            }
+        }
+        blp.Unlock(0);
+        blp.Close();
+        return out->m_px != nullptr;
     }
 
     const MapBakerArtImage* LoadCell(const char* wmoName, int32_t groupNum,
@@ -103,32 +164,20 @@ namespace {
         std::string lookup = Lower(key);
         auto it = s_trs.find(lookup);
         if (it == s_trs.end()) {
-            it = s_trs.find(Lower(std::string("World\\") + key));
+            lookup = Lower(std::string("World\\") + key);
+            it = s_trs.find(lookup);
         }
         if (it == s_trs.end()) {
             // wowmin's discovery finding: the quad base is not always the .wmo
             // basename -- instance WMOs drop an "_instanceN" suffix
             // (e.g. wailingcaverns_instance.wmo -> wailingcaverns_<grp>_<x>_<y>).
-            std::string base = WmoKeyBase(wmoName);
-            const size_t us = base.rfind('_');
-            if (us != std::string::npos) {
-                const std::string tail = Lower(base.substr(us + 1));
-                bool instanceSuffix = (tail == "instance");
-                if (!instanceSuffix && tail.rfind("instance", 0) == 0) {
-                    instanceSuffix = true;
-                    for (size_t k = 8; k < tail.size(); k++) {
-                        if (!std::isdigit(static_cast<unsigned char>(tail[k]))) {
-                            instanceSuffix = false;
-                            break;
-                        }
-                    }
-                }
-                if (instanceSuffix) {
-                    char alt[320];
-                    snprintf(alt, sizeof(alt), "%s_%03d_%02d_%02d.blp",
-                             base.substr(0, us).c_str(), groupNum, cellX, cellY);
-                    it = s_trs.find(Lower(alt));
-                }
+            const std::string stripped = InstanceStrippedBase(WmoKeyBase(wmoName));
+            if (!stripped.empty()) {
+                char alt[320];
+                snprintf(alt, sizeof(alt), "%s_%03d_%02d_%02d.blp",
+                         stripped.c_str(), groupNum, cellX, cellY);
+                lookup = Lower(alt);
+                it = s_trs.find(lookup);
             }
         }
         if (it == s_trs.end()) {
@@ -139,29 +188,8 @@ namespace {
         }
 
         MapBakerArtImage image = { 0, 0, nullptr };
-        if (it != s_trs.end() && !it->second.empty()) {
-            const std::string path = std::string("Textures\\Minimap\\") + it->second;
-            CBLPFile blp;
-            if (blp.Open(path.c_str(), 1)) {
-                uint8_t* pixels = nullptr;
-                uint32_t stride = 0;
-                if (blp.Lock(PIXEL_ARGB8888, 0, pixels, stride) && pixels) {
-                    const int32_t w = static_cast<int32_t>(blp.Width(0));
-                    const int32_t h = static_cast<int32_t>(blp.Height(0));
-                    if (w > 0 && h > 0) {
-                        image.m_w = w;
-                        image.m_h = h;
-                        image.m_px = new uint8_t[static_cast<size_t>(w) * h * 4];
-                        for (int32_t y = 0; y < h; y++) {
-                            memcpy(image.m_px + static_cast<size_t>(y) * w * 4,
-                                   pixels + static_cast<size_t>(y) * stride,
-                                   static_cast<size_t>(w) * 4);
-                        }
-                    }
-                }
-                blp.Unlock(0);
-                blp.Close();
-            }
+        if (it != s_trs.end()) {
+            DecodeTrsKey(it->first, &image);
         }
 
         if (image.m_px) {
@@ -172,6 +200,53 @@ namespace {
         }
         auto inserted = s_cache.emplace(key, image);
         return &inserted.first->second;
+    }
+
+    // "base|group" index used by the interior remaster filter.
+    void BuildArtGroupIndex() {
+        s_artGroups.clear();
+        for (const auto& kv : s_trs) {
+            const std::string& key = kv.first;
+            if (key.size() < 12 || key.compare(key.size() - 4, 4, ".blp") != 0) {
+                continue;
+            }
+            const std::string stem = key.substr(0, key.size() - 4);
+            const size_t u3 = stem.rfind('_');
+            if (u3 == std::string::npos || u3 < 7) {
+                continue;
+            }
+            const size_t u2 = stem.rfind('_', u3 - 1);
+            if (u2 == std::string::npos || u2 < 4) {
+                continue;
+            }
+            const size_t u1 = stem.rfind('_', u2 - 1);
+            if (u1 == std::string::npos || u1 == 0) {
+                continue;
+            }
+            const std::string group = stem.substr(u1 + 1, u2 - u1 - 1);
+            const std::string cellX = stem.substr(u2 + 1, u3 - u2 - 1);
+            const std::string cellY = stem.substr(u3 + 1);
+            if (group.size() != 3 || cellX.size() != 2 || cellY.size() != 2) {
+                continue;
+            }
+            bool digits = true;
+            for (char c : group + cellX + cellY) {
+                if (!std::isdigit(static_cast<unsigned char>(c))) {
+                    digits = false;
+                    break;
+                }
+            }
+            if (!digits) {
+                continue;
+            }
+            const std::string base = stem.substr(0, u1);
+            s_artGroups.insert(base + "|" + group);
+            if (base.rfind("world\\", 0) != 0) {
+                s_artGroups.insert("world\\" + base + "|" + group);
+            }
+        }
+        fprintf(stderr, "MapBaker: minimap art: %u interior WMO groups with stock cells\n",
+                static_cast<uint32_t>(s_artGroups.size()));
     }
 }
 
@@ -232,6 +307,9 @@ bool MapBakerArtInit() {
     s_trsLoaded = !s_trs.empty();
     fprintf(stderr, "MapBaker: minimap art: md5translate.trs loaded, %u name entries\n",
             static_cast<uint32_t>(s_trs.size()));
+    if (s_trsLoaded) {
+        BuildArtGroupIndex();
+    }
 
     if (getenv("MAPBAKER_ART_DUMP")) {
         uint32_t shown = 0;
@@ -251,6 +329,64 @@ bool MapBakerArtInit() {
         fprintf(stderr, "MapBaker art dump: %u stormwind entries shown\n", sw);
     }
     return s_trsLoaded;
+}
+
+bool MapBakerArtHasGroup(const char* wmoName, int32_t groupNum) {
+    if (!MapBakerArtInit()) {
+        // Without the client translation table there is no way to filter by stock art.
+        // Keep the historical behaviour (all non-exterior groups) instead of rendering
+        // an empty interior layer.
+        return true;
+    }
+    char suffix[16];
+    snprintf(suffix, sizeof(suffix), "|%03d", groupNum);
+    const std::string base = Lower(WmoKeyBase(wmoName));
+    if (s_artGroups.find(base + suffix) != s_artGroups.end()) {
+        return true;
+    }
+    if (s_artGroups.find("world\\" + base + suffix) != s_artGroups.end()) {
+        return true;
+    }
+    const std::string stripped = Lower(InstanceStrippedBase(base));
+    if (!stripped.empty() &&
+            (s_artGroups.find(stripped + suffix) != s_artGroups.end() ||
+             s_artGroups.find("world\\" + stripped + suffix) != s_artGroups.end())) {
+        return true;
+    }
+    return false;
+}
+
+const MapBakerTerrainImage* MapBakerTerrainGet(const char* mapDirectory, int32_t tx, int32_t ty) {
+    if (!MapBakerArtInit() || !mapDirectory || !mapDirectory[0]) {
+        return nullptr;
+    }
+    char name[320];
+    // Client format: <MapRec directory>\map<tileY>_<tileX>.blp, where the first number
+    // is the row (tx in MapBaker) and the second is the column (ty).
+    snprintf(name, sizeof(name), "%s\\map%d_%02d.blp", mapDirectory, tx, ty);
+    const std::string key = Lower(name);
+
+    auto cached = s_terrainCache.find(key);
+    if (cached != s_terrainCache.end()) {
+        return &cached->second;
+    }
+
+    MapBakerTerrainImage image = { 0, 0, nullptr };
+    auto it = s_trs.find(key);
+    if (it == s_trs.end()) {
+        it = s_trs.find(Lower(std::string("World\\") + name));
+    }
+    if (it != s_trs.end()) {
+        MapBakerArtImage art = { 0, 0, nullptr };
+        if (DecodeTrsKey(it->first, &art)) {
+            image.m_w = art.m_w;
+            image.m_h = art.m_h;
+            image.m_px = art.m_px;
+        }
+    }
+
+    auto inserted = s_terrainCache.emplace(key, image);
+    return &inserted.first->second;
 }
 
 uint32_t MapBakerArtCellGrid(float x0, float x1, float y0, float y1,

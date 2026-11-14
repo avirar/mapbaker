@@ -135,6 +135,141 @@ namespace {
         return ok;
     }
 
+    // --- per-group stock interior art dump (viewer's tunnel x-ray list) --------------
+    void JsonEscape(FILE* f, const char* s) {
+        if (!s) {
+            return;
+        }
+        for (const unsigned char* p = reinterpret_cast<const unsigned char*>(s); *p; p++) {
+            switch (*p) {
+                case '"': fputs("\\\"", f); break;
+                case '\\': fputs("\\\\", f); break;
+                case '\b': fputs("\\b", f); break;
+                case '\f': fputs("\\f", f); break;
+                case '\n': fputs("\\n", f); break;
+                case '\r': fputs("\\r", f); break;
+                case '\t': fputs("\\t", f); break;
+                default:
+                    if (*p < 0x20) {
+                        fprintf(f, "\\u%04x", *p);
+                    } else {
+                        fputc(*p, f);
+                    }
+            }
+        }
+    }
+
+    struct DumpCell {
+        MapBakerArtCell m_cell;
+        const MapBakerArtImage* m_image;
+        char m_png[64];
+    };
+
+    bool DumpInteriorArt(const char* outDir, int32_t mapId) {
+        if (!outDir) {
+            return false;
+        }
+        char artDir[520];
+        snprintf(artDir, sizeof(artDir), "%s\\interior-art", outDir);
+        CreateDirectoryA(artDir, nullptr);
+
+        char jsonPath[520];
+        snprintf(jsonPath, sizeof(jsonPath), "%s\\interior-art.json", outDir);
+        FILE* json = fopen(jsonPath, "w");
+        if (!json) {
+            fprintf(stderr, "MapBaker: could not write %s\n", jsonPath);
+            return false;
+        }
+        fprintf(json, "[\n");
+        bool firstGroup = true;
+        uint32_t groupCount = 0;
+        uint32_t cellCount = 0;
+
+        for (uint32_t i = 0; i < MapBakerQuadCount; i++) {
+            const MapBakerQuadEntry& e = MapBakerQuadTable[i];
+            if (e.m_smoFlags & 0x8) {
+                continue;   // stock interior art only
+            }
+            if (!MapBakerArtHasGroup(e.m_wmoName, e.m_groupNum)) {
+                continue;
+            }
+            MapBakerArtCell cells[256];
+            const uint32_t n = MapBakerArtCellGrid(e.m_lx0, e.m_lx1, e.m_ly0, e.m_ly1,
+                                                   cells, 256);
+            std::vector<DumpCell> valid;
+            for (uint32_t c = 0; c < n; c++) {
+                const MapBakerArtImage* image =
+                        MapBakerArtGet(e.m_wmoName, e.m_groupNum, cells[c].m_x, cells[c].m_y);
+                if (!image || !image->m_px || image->m_w <= 0 || image->m_h <= 0) {
+                    continue;
+                }
+                DumpCell dc;
+                dc.m_cell = cells[c];
+                dc.m_image = image;
+                snprintf(dc.m_png, sizeof(dc.m_png), "a%u_%02d_%02d.png", i,
+                         cells[c].m_x, cells[c].m_y);
+                char pngPath[520];
+                snprintf(pngPath, sizeof(pngPath), "%s\\%s", artDir, dc.m_png);
+                const uint32_t w = static_cast<uint32_t>(image->m_w);
+                const uint32_t h = static_cast<uint32_t>(image->m_h);
+                std::vector<uint8_t> rgba(static_cast<size_t>(w) * h * 4);
+                for (size_t p = 0; p < rgba.size(); p += 4) {
+                    rgba[p + 0] = image->m_px[p + 2];
+                    rgba[p + 1] = image->m_px[p + 1];
+                    rgba[p + 2] = image->m_px[p + 0];
+                    rgba[p + 3] = image->m_px[p + 3];
+                }
+                if (!MapBakerPng::WriteRgba(pngPath, static_cast<int32_t>(w),
+                                            static_cast<int32_t>(h), rgba.data())) {
+                    fprintf(stderr, "MapBaker: could not write art cell %s\n", pngPath);
+                    continue;
+                }
+                valid.push_back(dc);
+            }
+            if (valid.empty()) {
+                continue;
+            }
+
+            if (!firstGroup) {
+                fprintf(json, ",\n");
+            }
+            firstGroup = false;
+            fprintf(json,
+                    "{\"id\":%u,\"wmo\":\"", i);
+            JsonEscape(json, e.m_wmoName);
+            fprintf(json, "\",\"grp\":%d,\"smo\":\"", e.m_groupNum);
+            JsonEscape(json, e.m_smoName);
+            fprintf(json,
+                    "\",\"z\":[%.1f,%.1f],\"bbox\":[%.2f,%.2f,%.2f,%.2f],"
+                    "\"mat\":[%.6f,%.6f,%.6f,%.6f,%.3f,%.3f],\"cells\":[",
+                    (double)e.m_z0, (double)e.m_z1,
+                    (double)e.m_x0, (double)e.m_x1, (double)e.m_y0, (double)e.m_y1,
+                    (double)e.m_ma, (double)e.m_mb, (double)e.m_mc, (double)e.m_md,
+                    (double)e.m_mtx, (double)e.m_mty);
+            for (size_t c = 0; c < valid.size(); c++) {
+                const DumpCell& dc = valid[c];
+                if (c) {
+                    fputc(',', json);
+                }
+                fprintf(json,
+                        "{\"x\":%d,\"y\":%d,\"x0\":%.4f,\"x1\":%.4f,\"y0\":%.4f,\"y1\":%.4f,"
+                        "\"w\":%d,\"h\":%d,\"img\":\"interior-art/%s\"}",
+                        dc.m_cell.m_x, dc.m_cell.m_y,
+                        (double)dc.m_cell.m_x0, (double)dc.m_cell.m_x1,
+                        (double)dc.m_cell.m_y0, (double)dc.m_cell.m_y1,
+                        dc.m_image->m_w, dc.m_image->m_h, dc.m_png);
+            }
+            fprintf(json, "]}");
+            groupCount++;
+            cellCount += static_cast<uint32_t>(valid.size());
+        }
+        fprintf(json, "\n]\n");
+        fclose(json);
+        fprintf(stderr, "MapBaker: interior art dump: %u groups, %u cells -> %s (map %d)\n",
+                groupCount, cellCount, jsonPath, mapId);
+        return true;
+    }
+
     void BuildTileList() {
         s_tiles.clear();
         if (s_config.tileListFile) {
@@ -196,7 +331,8 @@ namespace {
             }
         }
         const bool rgba = (s_config.layer == 2 || s_config.layer == 3 ||
-                           s_config.layer == 4 || s_config.layer == 6);
+                           s_config.layer == 4 || s_config.layer == 6 ||
+                           s_config.layer == 7);
         const int32_t channels = rgba ? 4 : 3;
         std::vector<uint8_t> pixels(static_cast<size_t>(px) * px * channels);
         const uint32_t start = OsGetAsyncTimeMs();
@@ -514,6 +650,11 @@ namespace {
                     fprintf(stderr, "MapBaker: quad table dumped to %s\n", s_config.quadDump);
                 }
             }
+        }
+        if (s_config.dumpInteriorArt) {
+            DumpInteriorArt(s_config.outDir, s_mapIdNum);
+            EventPostClose();
+            return 1;
         }
         s_ready = true;
         EventRegister(EVENT_ID_IDLE, RenderCallback);

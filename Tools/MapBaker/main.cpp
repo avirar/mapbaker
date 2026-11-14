@@ -171,7 +171,9 @@ static void Usage() {
     printf("  --client <path>     client data root (default: exe directory)\n");
     printf("  --map <dir|id>      map directory name or numeric id (required)\n");
     printf("  --preset <name>     map (default) | realistic\n");
-    printf("  --layer <name>      combined (default) | scene | terrain | wmo | trees | interiors | quads\n");
+    printf("  --layer <name>      combined (default) | scene | terrain | wmo | trees | interiors\n");
+    printf("                      | quads (WMO interior art) | quads-ext (stock outdoor minimap)\n");
+    printf("                      | quads-int (same as 'quads --quad-sel int')\n");
     printf("  --px <n>            tile resolution in pixels (default 1024)\n");
     printf("  --ssaa <n>          supersampling factor (default 2)\n");
     printf("  --out <dir>         output directory for PNG tiles (default: exe dir)\n");
@@ -212,6 +214,8 @@ static void Usage() {
     printf("  --quad-alpha <0-255>  quad overlay alpha (default 160; art mode uses 255)\n");
     printf("  --quad-sel <mode>   which groups apply: none | all | ext (default) | int\n");
     printf("  --quad-dump <file>  write the collected group table (i/wmo/grp/smo/ext/sel/bbox)\n");
+    printf("  --dump-interior-art  write <out>/interior-art.json + per-cell PNGs for the\n");
+    printf("                      stock interior groups, then exit (for the per-group viewer)\n");
     printf("  --skip-existing     skip tiles whose PNG already exists (resume / parallel workers)\n");
     printf("  --tile-list <file>  render only the \"tx ty\" lines in this file (parallel workers)\n");
     printf("  --quad-cache <file> cache the collected WMO group table (loads instantly when it\n");
@@ -259,6 +263,7 @@ int main(int argc, char** argv) {
     config.quadFill = true; // draw the WMO groups the viewpoint cull skips (districts)
     config.quadWmo = true;  // 3D WMO underneath the art (the comprehensive map look)
     config.quadDump = nullptr;
+    config.dumpInteriorArt = false;
     config.skipExisting = false;
     config.tileListFile = nullptr;
     config.quadCache = nullptr;
@@ -290,8 +295,12 @@ int main(int argc, char** argv) {
             else if (!strcmp(layer, "trees")) config.layer = 3;
             else if (!strcmp(layer, "interiors")) config.layer = 6;
             else if (!strcmp(layer, "quads")) config.layer = 4;
-            else {
-                fprintf(stderr, "MapBaker: --layer expects combined | terrain | wmo | trees | quads\n");
+            else if (!strcmp(layer, "quads-ext")) config.layer = 7;
+            else if (!strcmp(layer, "quads-int")) {
+                config.layer = 4;
+                config.quadSel = 3;
+            } else {
+                fprintf(stderr, "MapBaker: --layer expects combined | scene | terrain | wmo | trees | interiors | quads | quads-ext | quads-int\n");
                 return 1;
             }
         } else if (!strcmp(argv[i], "--preset") && i + 1 < argc) {
@@ -426,6 +435,9 @@ int main(int argc, char** argv) {
             config.quadAlpha = static_cast<float>(strtod(argv[++i], nullptr)) / 255.0f;
         } else if (!strcmp(argv[i], "--quad-dump") && i + 1 < argc) {
             config.quadDump = argv[++i];
+        } else if (!strcmp(argv[i], "--dump-interior-art")) {
+            config.dumpInteriorArt = true;
+            config.quads = true;
         } else if (!strcmp(argv[i], "--quad-sel") && i + 1 < argc) {
             const char* sel = argv[++i];
             if (!strcmp(sel, "none")) config.quadSel = 0;

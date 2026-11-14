@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include "Tools/MapBaker/MapBakerXray.h"
 #include "Tools/MapBaker/MapBakerQuad.h"
+#include "Tools/MapBaker/MapBakerArt.h"
 #include <new>
 #include <algorithm>
 #include <cmath>
@@ -3538,12 +3539,22 @@ void CWorldScene::RenderMapObjDefGroups() {
             const int32_t gidx = (xrayOn ? MapBakerXrayGateIdx(mapObjDef) : -1);
             const bool gated = (gidx >= 0) || (gidx == -2);
 
-            // Interior remaster: skip exterior shells/roofs in open-world maps. Instances
-            // are global WMOs (bDungeon); their groups are already the interior, so keep
-            // all of them and let backface culling remove downward-facing ceilings.
+            // Interior remaster: open-world maps render only the WMO groups that have
+            // stock interior minimap art cells (the same set the 2D interior quad layer
+            // draws). This excludes city shells, roofs and decorative groups that the
+            // original minimap never displays indoors. Instances are global WMOs
+            // (bDungeon); their groups are already the interior, so keep all of them.
             const bool interiorFilter = MapBakerInteriorOnly && !CMap::bDungeon;
-            const bool skipExterior = interiorFilter &&
-                    (mapObjDef->m_owner->GetGroupFlags(group->m_groupNum) & 0x10008);
+            bool skipExterior = false;
+            if (interiorFilter) {
+                const CMapObjGroup* smoGroup = mapObjDef->m_owner
+                        ? mapObjDef->m_owner->GetGroup(static_cast<int32_t>(group->m_groupNum), 0)
+                        : nullptr;
+                const bool exterior = smoGroup && (smoGroup->m_flags & 0x8);
+                skipExterior = !mapObjDef->m_owner || exterior ||
+                        !MapBakerArtHasGroup(mapObjDef->m_owner->m_wmoName,
+                                             static_cast<int32_t>(group->m_groupNum));
+            }
 
             if (MapBakerQuadCollect) {
                 MapBakerQuadCollectDef(mapObjDef);

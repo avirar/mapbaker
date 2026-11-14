@@ -6,7 +6,7 @@ Input : a directory of tile_<tx>_<ty>.png (px x px each), a tile rectangle
 Output: <out>/<name>.tif          tiled, pyramidal, BigTIFF master
         <out>/<name>-xyz/{z}/{x}/{y}.jpg   XYZ (Google) pyramid, 512 px tiles
         <out>/<name>-preview.jpg   small preview
-        <out>/viewer.html          self-contained pan/zoom viewer
+        <out>/viewer.html          optional single-layer viewer (--viewer)
 
 Missing tiles (or tiles that are a single flat colour -- the baker writes those for
 ADT slots with no terrain) are replaced with the background colour.
@@ -104,6 +104,9 @@ def main():
                     help='deflate 1-9 or zstd 1-22 compression level')
     ap.add_argument('--alpha', action='store_true',
                     help='RGBA layer mode: transparent background and PNG DZI tiles')
+    ap.add_argument('--viewer', action='store_true',
+                    help='also write a single-layer viewer.html (default: no; the map '
+                         'pipeline writes the unified multi-layer viewer separately)')
     args = ap.parse_args()
     vips_env = dict(os.environ)
     vips_env['VIPS_CONCURRENCY'] = str(args.concurrency)
@@ -214,13 +217,14 @@ def main():
                    capture_output=True, text=True, env=vips_env)
     log('preview: %s' % preview)
 
-    viewer = os.path.join(args.out, 'viewer.html')
-    with open(viewer, 'w', encoding='utf-8') as f:
-        f.write(VIEWER_HTML.replace('@NAME@', args.name)
-                .replace('@TX0@', str(args.tx0)).replace('@TY0@', str(args.ty0))
-                .replace('@PX@', str(args.px)).replace('@TITLE@', args.name)
-                .replace('@MAPID@', str(args.map_id)))
-    log('viewer: %s' % viewer)
+    if args.viewer:
+        viewer = os.path.join(args.out, 'viewer.html')
+        with open(viewer, 'w', encoding='utf-8') as f:
+            f.write(VIEWER_HTML.replace('@NAME@', args.name)
+                    .replace('@TX0@', str(args.tx0)).replace('@TY0@', str(args.ty0))
+                    .replace('@PX@', str(args.px)).replace('@TITLE@', args.name)
+                    .replace('@MAPID@', str(args.map_id)))
+        log('viewer: %s' % viewer)
     if args.osd:
         dst = os.path.join(args.out, 'openseadragon')
         if os.path.isdir(args.osd):

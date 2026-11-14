@@ -36,6 +36,14 @@ struct MapBakerArtImage {
     uint8_t* m_px;      // m_w*m_h*4 bytes, or null for a cached "missing" entry
 };
 
+// One stock outdoor minimap tile (Textures\Minimap\<dir>\map<tx>_<ty>.blp).
+// Same byte order as MapBakerArtImage (b,g,r,a); the caller converts to RGBA.
+struct MapBakerTerrainImage {
+    int32_t m_w;
+    int32_t m_h;
+    uint8_t* m_px;
+};
+
 // Load Textures\Minimap\md5translate.trs. Safe to call repeatedly (loads once).
 // Returns false (and logs once) if the client data has no minimap translation table.
 bool MapBakerArtInit();
@@ -48,6 +56,16 @@ uint32_t MapBakerArtCellGrid(float x0, float x1, float y0, float y1,
 // Look up + decode one cell texture (cached). m_px is null if the cell has no art.
 const MapBakerArtImage* MapBakerArtGet(const char* wmoName, int32_t groupNum,
                                        int32_t cellX, int32_t cellY);
+
+// True when the WMO group has at least one stock minimap cell in md5translate.trs.
+// Used by the open-world interior remaster to render only stock interior locations.
+bool MapBakerArtHasGroup(const char* wmoName, int32_t groupNum);
+
+// Stock outdoor minimap tile for one ADT: Textures\Minimap\<mapDir>\map<tx>_<ty>.blp.
+// The client's outdoor minimap uses these images, not WMO art cells. Returns null when
+// the tile has no stock image. Cached.
+const MapBakerTerrainImage* MapBakerTerrainGet(const char* mapDirectory,
+                                               int32_t tx, int32_t ty);
 
 // Cumulative counters (for the run log / UI): lookups, hits, misses.
 void MapBakerArtStats(uint32_t* looked, uint32_t* hit, uint32_t* missing);

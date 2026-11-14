@@ -6,9 +6,22 @@ composites the **client's own 2D minimap art** on top, and stitches the result i
 gigapixel map: PNG tiles, a pyramidal BigTIFF master, a DZI deep-zoom pyramid, and a
 browser viewer.
 
-The default look is a "comprehensive 2D map": 3D terrain + 3D WMO underneath (with the
-viewpoint-culled city districts filled in), and the per-cell minimap artwork composited on
-top exactly where the game's minimap would draw it.
+The final delivery uses four independent layers:
+
+| layer | contents |
+|---|---|
+| `scene` | opaque 3D terrain + WMO + trees + water — the high-res replacement for the outdoor minimap |
+| `interiors` | transparent 3D render of the **stock interior minimap locations only** |
+| `quads-ext` | the client's stock outdoor minimap, one `Textures\Minimap\<dir>\map<tx>_<ty>.blp` image per ADT |
+| `quads-int` | the stock WMO interior minimap art cells, as a whole-map x-ray overlay |
+
+`interiors` is filtered to WMO groups that actually have stock interior art cells, and it
+does not render outdoor M2 props. Instances keep their full interior render. The viewer
+defaults to **scene + interiors only**; both quad layers are off until toggled. For
+instances and battlegrounds the viewer also exposes a per-group tunnel x-ray list: tick a
+WMO group and its stock minimap cells are drawn over the scene with the same local → world
+instance matrix the client uses (e.g. Stratholme `instancehall03` pink tunnel over
+`stronghold01` red roof).
 
 ---
 
@@ -135,7 +148,10 @@ terrain+WMO and the 2D art overlay**. Disable with `--no-quad-fill`.
 | `--gain <f>` | post-render brightness gain |
 | `--city-file <path>` / `--city-elev <deg>` | city ADT list + its sun elevation |
 | `--xray <off\|depthoff\|zsort\|zinv>` etc. | x-ray city-floor modes (legacy/indoor look) |
-| `--quads` | enable the 2D minimap-art overlay (collect groups + composite) |
+| `--layer quads-ext` | stock outdoor minimap layer: one client `map<tx>_<ty>.blp` per ADT (RGBA) |
+| `--layer quads-int` | stock WMO interior art cells (same as `--layer quads --quad-sel int`) |
+| `--dump-interior-art` | write `<out>/interior-art.json` + per-cell PNGs for the per-group tunnel x-ray viewer, then exit |
+| `--quads` | enable the 2D WMO-art overlay (collect groups + composite) |
 | `--quad-cache <file>` | binary group-table cache (`MBQUAD02` v2): loads instantly if present, else collects once and saves |
 | `--quad-dump <file>` | dump the collected group table (names, flags, bbox, local bbox, matrix, MOGI flags, batch layout) |
 | `--quad-tint` | flat per-class tints instead of real art (diagnostic) |
@@ -191,7 +207,9 @@ Deleting the file forces a fresh collection.
 Requires libvips 8.x. Steps: background-filled row
 strips (tiles missing or single-colour are replaced with `--background`) → mosaic `.v` →
 **pyramidal BigTIFF** (512-px tiles, `--tiff-compression` / `--tiff-level`) → **DZI**
-pyramid (512 px, 1-px overlap) → preview → OpenSeadragon viewer (`viewer.html`).
+pyramid (512 px, 1-px overlap) → preview. `--viewer` optionally writes a single-layer
+`viewer.html`; the final pipeline leaves that to `make_interior_viewer.py`, which writes
+the unified four-layer viewer and both `viewer.html` and `viewer-interiors.html`.
 
 For large 4096 stitches prefer `--tiff-compression zstd --tiff-level 1`: it is lossless,
 ~6.5× faster than deflate and ~24% smaller on Northrend. Default remains deflate for
@@ -219,7 +237,8 @@ Outputs (Eastern Kingdoms example): `tiles/` (882 PNG), `ek1024.tif` (21,504 × 
   literal is capped at 16,384 chars — the page is split into adjacent `R"HTML(...)"` chunks.
 - The quad table holds up to 65,536 groups (`MAPBAKER_QUAD_MAX`); the EK continent collects
   ~4,400.
-- The art cache is bounded (768 MB) and evicts wholesale when exceeded.
+- The art cell cache accepts up to 8 GB (a full continent stays resident; it is never
+  evicted mid-tile, which used to invalidate in-use image pointers).
 - `--light-elev 60` is the tuned value for the baked minimap look; `map` preset = noon, no
   fog/sky/weather, shadows/specular/detail doodads off. The `map` preset uses **flat** light
   by default: Northrend's `Light.dbc` zone records are strongly cyan and would otherwise paint
