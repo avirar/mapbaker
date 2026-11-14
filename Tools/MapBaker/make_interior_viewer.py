@@ -184,7 +184,7 @@ const state={
   visible:Object.assign({},DEFAULTS),
   extOpacity:1.0, intOpacity:1.0,
   crosshair:true, items:{}, groups:[], selected:new Set(),
-  groupFilter:'', panelOpen:false, fitted:false
+  groupFilter:'', panelOpen:false, fitted:false, queryBoxApplied:false
 };
 let viewer=null, loaded=0, pendingDraw=false, hitTimer=null;
 
@@ -239,6 +239,18 @@ function applyAll(){
         const r=item.imageToViewportRectangle(new OpenSeadragon.Rect(FIT[0],FIT[1],FIT[2],FIT[3]));
         viewer.viewport.fitBounds(r,true);
       },50);
+    }
+    const qb=new URLSearchParams(location.search).get('box');
+    if (qb && !state.queryBoxApplied && state.items.scene) {
+      const b=qb.split(',').map(Number);
+      if (b.length===4 && b.every(Number.isFinite)) {
+        state.queryBoxApplied=true;
+        setTimeout(()=>{
+          const item=state.items.scene;
+          const r=item.imageToViewportRectangle(new OpenSeadragon.Rect(b[0],b[1],b[2],b[3]));
+          viewer.viewport.fitBounds(r,true);
+        },80);
+      }
     }
   }
   updateButtons(); requestDraw();
