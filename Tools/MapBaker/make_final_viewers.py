@@ -107,8 +107,21 @@ def main():
         if p.returncode != 0:
             failed.append((mid, p.stderr[-200:]))
             continue
-        rel = 'maps/%s' % folder
-        img = '%s/out/%s-interiors-preview.png' % (rel, slug)
+        # The gallery lives in /final/remaster/, one level below the delivery root.
+        rel = '../maps/%s' % folder
+        # Composite the interior layer over the scene for a useful thumbnail. The raw
+        # interior preview is transparent, which looks almost empty for sparse maps.
+        try:
+            scene_im = Image.open(os.path.join(out, slug + '-scene-preview.jpg')).convert('RGB')
+            inter_im = Image.open(os.path.join(out, slug + '-interiors-preview.png')).convert('RGBA')
+            if inter_im.size != scene_im.size:
+                inter_im = inter_im.resize(scene_im.size)
+            scene_im.paste(inter_im, (0, 0), inter_im)
+            card_path = os.path.join(out, slug + '-interior-card.jpg')
+            scene_im.save(card_path, quality=90)
+            img = '%s/out/%s-interior-card.jpg' % (rel, slug)
+        except Exception:
+            img = '%s/out/%s-scene-preview.jpg' % (rel, slug)
         cards.append((mid, title, rel, img, px, rec['count']))
 
     cards.sort(key=lambda c: (c[0] not in CONTINENTS, c[0]))
