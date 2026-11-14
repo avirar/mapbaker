@@ -100,12 +100,21 @@ HTML = r'''<!doctype html>
   .chip.on { background:#123a5c; border-color:#3d8bd4; color:#eaf6ff; }
   #glist { flex:1; overflow:auto; padding:6px 8px 10px; margin-top:4px; }
   .gitem { display:flex; align-items:flex-start; gap:7px; padding:6px 5px;
-    border-radius:5px; cursor:pointer; }
+    border-radius:5px; }
   .gitem:hover { background:#101f2d; }
   .gitem input { margin-top:2px; accent-color:#3d8bd4; }
   .gitem b { color:#cfe5f7; font-weight:600; font-size:12px; }
   .gitem small { display:block; color:#6f879b; font-size:10px; }
   .gitem.hit { box-shadow:inset 0 0 0 1px #3d8bd4; }
+  .gart { display:flex; align-items:flex-start; gap:7px; flex:1; cursor:pointer; }
+  .g3d { display:flex; align-items:center; gap:3px; color:#9fd0ff; font-size:10px;
+    white-space:nowrap; padding:2px 5px; border:1px solid #2a4157; border-radius:10px;
+    cursor:pointer; }
+  .g3d:hover { border-color:#3d8bd4; background:#123a5c; }
+  .g3d input { margin:0; }
+  #g3dmode { background:#0f1d2a; color:#d7e6f5; border:1px solid #2a4157;
+    border-radius:5px; padding:5px 7px; font:11px inherit; }
+  .glabel { color:#7f96ab; font-size:11px; align-self:center; white-space:nowrap; }
   #gerr { color:#ff8b8b; font-size:11px; padding:8px 12px; white-space:pre-wrap; }
   @media (max-width:900px) {
     #gpanel { width:300px; }
@@ -161,7 +170,12 @@ HTML = r'''<!doctype html>
   <div class="ghead"><b>Interior tunnel x-ray</b><button class="gclose" id="gclose">×</button></div>
   <div class="gsub">Tick stock interior WMO groups to draw their minimap art over the scene. The group is pinned/rotated with the WMO instance matrix.</div>
   <div class="grow"><input type="text" id="gsearch" placeholder="Search group, WMO or number"></div>
-  <div class="grow"><button id="gclear">Clear</button><button id="gat">Select at crosshair</button></div>
+  <div class="grow">
+    <span class="glabel">3D mode</span>
+    <select id="g3dmode"><option value="full" selected>Full</option><option value="masked">Masked</option></select>
+    <button id="gat3d">3D at crosshair</button>
+  </div>
+  <div class="grow"><button id="gclear">Clear</button><button id="gat">Select art at crosshair</button></div>
   <div id="ghit"></div>
   <div id="glist"></div>
   <div id="gerr"></div>
@@ -171,7 +185,7 @@ HTML = r'''<!doctype html>
 
 <script>
 const TX0=@TX0@, TY0=@TY0@, PX=@PX@, MAPID=@MAPID@, FIT=@FIT@, INSTANCE=@INSTANCE@;
-const HAS_EXT=@HAS_EXT@, HAS_INT=@HAS_INT@, HAS_GROUPS=@HAS_GROUPS@;
+const HAS_EXT=@HAS_EXT@, HAS_INT=@HAS_INT@, HAS_GROUPS=@HAS_GROUPS@, HAS_3D=@HAS_3D@;
 const A=533.33331, O=17066.666;
 const LAYERS=[
   {id:'scene', file:'@NAME@-scene.dzi'},
@@ -184,6 +198,7 @@ const state={
   visible:Object.assign({},DEFAULTS),
   extOpacity:1.0, intOpacity:1.0,
   crosshair:true, items:{}, groups:[], selected:new Set(),
+  selected3d:new Set(), mode3d:'full', has3d:!!HAS_3D,
   groupFilter:'', panelOpen:false, fitted:false, queryBoxApplied:false
 };
 let viewer=null, loaded=0, pendingDraw=false, hitTimer=null;
@@ -306,14 +321,47 @@ function ensureGroupImages(g){
     }
   });
 }
+function ensure3dGroupImages(g){
+  (g.cells3d||[]).forEach(c=>{
+    if (!c._fullImg) {
+      const img=new Image(); img.onload=requestDraw; img.src=c.full; c._fullImg=img;
+    }
+    if (!c._maskedImg) {
+      const img=new Image(); img.onload=requestDraw; img.src=c.masked; c._maskedImg=img;
+    }
+  });
+}
 function drawArt(){
   const c=$('artcanvas'), ctx=c.getContext('2d');
   ctx.clearRect(0,0,c.width,c.height);
-  if (!state.selected.size || !state.items.scene || state.intOpacity<=0) return;
+  if ((!state.selected.size && !state.selected3d.size) ||
+      !state.items.scene || state.intOpacity<=0) return;
   ctx.imageSmoothingEnabled=true;
+  let drawn3d=0;
   for (const g of state.groups) {
-    if (!state.selected.has(g.id)) continue;
+    const artOn=state.selected.has(g.id);
+    const threeDOn=state.selected3d.has(g.id) && g.has3d;
+    if (!artOn && !threeDOn) continue;
     for (const cell of g.cells) {
+      if (threeDOn && cell._3d) {
+        const c3=cell._3d;
+        const img=state.mode3d==='masked' ? c3._maskedImg : c3._fullImg;
+        if (!img || !img.complete || !img.naturalWidth) continue;
+        const w=c3.world; // [x0,x1,y0,y1]
+        const p0=worldToScreen(w[1],w[3]); // NW
+        const p1=worldToScreen(w[1],w[2]); // NE
+        const p2=worldToScreen(w[0],w[3]); // SW
+        if (!p0||!p1||!p2) continue;
+        const bw=p1.x-p0.x, bh=p2.y-p0.y;
+        if (bw<=0 || bh<=0) continue;
+        ctx.save();
+        ctx.globalAlpha=state.intOpacity;
+        ctx.drawImage(img,p0.x,p0.y,bw,bh);
+        ctx.restore();
+        drawn3d++;
+        continue;
+      }
+      if (!artOn) continue;
       const img=cell._img;
       if (!img || !img.complete || !img.naturalWidth) continue;
       const wc=cell._world;
@@ -331,6 +379,10 @@ function drawArt(){
       ctx.drawImage(img,0,0);
       ctx.restore();
     }
+  }
+  if (new URLSearchParams(location.search).get('debug')) {
+    $('err').textContent='3D selected '+state.selected3d.size+', drawn '+drawn3d+
+      ', mode '+state.mode3d+', groups '+state.groups.length;
   }
 }
 function pointInQuad(px,py,q){
@@ -388,8 +440,10 @@ function renderGroupList(){
   });
   const hits=new Set(hitGroups().map(g=>g.id));
   for (const g of rows) {
+    const item=document.createElement('div');
+    item.className='gitem'+(hits.has(g.id)?' hit':'');
     const label=document.createElement('label');
-    label.className='gitem'+(hits.has(g.id)?' hit':'');
+    label.className='gart';
     const cb=document.createElement('input');
     cb.type='checkbox'; cb.checked=state.selected.has(g.id); cb.dataset.id=g.id;
     cb.addEventListener('change',()=>toggleGroup(g.id));
@@ -400,7 +454,18 @@ function renderGroupList(){
     small.textContent=wmo+' · grp '+g.grp+' · z '+g.z[0].toFixed(0)+'..'+g.z[1].toFixed(0)+
       ' · '+g.cells.length+' cell'+(g.cells.length===1?'':'s');
     span.appendChild(b); span.appendChild(small); label.appendChild(cb); label.appendChild(span);
-    box.appendChild(label);
+    item.appendChild(label);
+    if (state.has3d && g.has3d) {
+      const l3=document.createElement('label');
+      l3.className='g3d';
+      const cb3=document.createElement('input');
+      cb3.type='checkbox'; cb3.checked=state.selected3d.has(g.id);
+      cb3.addEventListener('change',()=>toggleGroup3d(g.id));
+      l3.appendChild(cb3);
+      l3.appendChild(document.createTextNode('3D'));
+      item.appendChild(l3);
+    }
+    box.appendChild(item);
   }
   if (!rows.length) {
     const d=document.createElement('div'); d.className='none gsub';
@@ -414,6 +479,14 @@ function toggleGroup(id){
     if (g) { state.selected.add(id); ensureGroupImages(g); }
   }
   renderHitChips(); renderGroupList(); requestDraw();
+}
+function toggleGroup3d(id){
+  if (state.selected3d.has(id)) state.selected3d.delete(id);
+  else {
+    const g=state.groups.find(x=>x.id===id);
+    if (g && g.has3d) { state.selected3d.add(id); ensure3dGroupImages(g); }
+  }
+  renderGroupList(); requestDraw();
 }
 function setPanel(open){
   state.panelOpen=!!open;
@@ -431,6 +504,40 @@ function selectFromQuery(){
     if (g) { state.selected.add(g.id); ensureGroupImages(g); }
   }
 }
+function merge3d(data){
+  const byKey={};
+  for (const c of (data||[])) {
+    byKey[String(c.id)+':'+c.x+':'+c.y]=c;
+    for (const gc of (c.cells||[])) {
+      byKey[String(c.id)+':'+gc.x+':'+gc.y]=gc;
+    }
+  }
+  state.has3d=false;
+  for (const g of state.groups) {
+    g.cells3d=[];
+    for (const cell of g.cells) {
+      const c3=byKey[String(g.id)+':'+cell.x+':'+cell.y];
+      if (c3) { cell._3d=c3; g.cells3d.push(c3); }
+    }
+    g.has3d=g.cells3d.length>0;
+    if (g.has3d) state.has3d=true;
+  }
+  if (!state.has3d) {
+    $('g3dmode').parentElement.style.display='none';
+  }
+}
+function select3dFromQuery(){
+  if (!state.has3d) return;
+  const q=new URLSearchParams(location.search).get('xray3d');
+  if (!q) return;
+  for (const token of q.split(',')) {
+    const t=token.trim();
+    if (!t) continue;
+    const g=state.groups.find(x=>String(x.id)===t || String(x.grp)===t ||
+                               (x.smo||'').toLowerCase()===t.toLowerCase());
+    if (g && g.has3d) { state.selected3d.add(g.id); ensure3dGroupImages(g); }
+  }
+}
 function loadGroupArt(){
   if (!INSTANCE || !HAS_GROUPS) return;
   $('groupsrow').style.display='flex';
@@ -439,7 +546,17 @@ function loadGroupArt(){
     .then(data=>{
       state.groups=data||[];
       prepareGroups();
+      if (HAS_3D) {
+        return fetch('interior-3d.json',{cache:'no-store'})
+          .then(r=>r.ok?r.json():[])
+          .then(d=>merge3d(d))
+          .catch(()=>{ state.has3d=false; $('g3dmode').parentElement.style.display='none'; });
+      }
+      return null;
+    })
+    .then(()=>{
       selectFromQuery();
+      select3dFromQuery();
       renderGroupList();
       renderHitChips();
       requestDraw();
@@ -455,6 +572,11 @@ function loadGroupArt(){
     });
 }
 function initOSD(){
+  const qmode=new URLSearchParams(location.search).get('mode3d');
+  if (qmode==='masked' || qmode==='full') {
+    state.mode3d=qmode;
+    $('g3dmode').value=qmode;
+  }
   viewer=OpenSeadragon({
     id:'osd',
     prefixUrl:'openseadragon/images/',
@@ -471,6 +593,9 @@ function initOSD(){
   if (!HAS_INT) {
     $('t-quads-int').parentElement.style.display='none';
     $('qintopacity').parentElement.style.display='none';
+  }
+  if (!HAS_3D) {
+    $('g3dmode').parentElement.style.display='none';
   }
   LAYERS.forEach((l,index)=>{
     viewer.addTiledImage({
@@ -525,13 +650,26 @@ function initOSD(){
   $('gclose').addEventListener('click',()=>setPanel(false));
   $('gsearch').addEventListener('input',e=>{ state.groupFilter=e.target.value; renderGroupList(); });
   $('gclear').addEventListener('click',()=>{
-    state.selected.clear(); renderGroupList(); renderHitChips(); requestDraw();
+    state.selected.clear(); state.selected3d.clear();
+    renderGroupList(); renderHitChips(); requestDraw();
   });
   $('gat').addEventListener('click',()=>{
     for (const g of hitGroups()) {
       state.selected.add(g.id); ensureGroupImages(g);
     }
     renderGroupList(); renderHitChips(); requestDraw();
+  });
+  $('gat3d').addEventListener('click',()=>{
+    if (!state.has3d) return;
+    for (const g of hitGroups()) {
+      if (!g.has3d) continue;
+      state.selected3d.add(g.id); ensure3dGroupImages(g);
+    }
+    renderGroupList(); requestDraw();
+  });
+  $('g3dmode').addEventListener('change',e=>{
+    state.mode3d=e.target.value;
+    requestDraw();
   });
   $('qextopacity').addEventListener('input',e=>{
     state.extOpacity=Number(e.target.value)/100;
@@ -556,8 +694,9 @@ function initOSD(){
   $('reset').addEventListener('click',()=>{
     state.visible=Object.assign({},DEFAULTS);
     state.extOpacity=1; state.intOpacity=1;
-    state.selected.clear();
-    applyAll(); renderGroupList(); renderHitChips();
+    state.selected.clear(); state.selected3d.clear(); state.mode3d='full';
+    $('g3dmode').value='full';
+    applyAll(); renderGroupList(); renderHitChips(); requestDraw();
   });
   resizeCanvas();
   updateButtons();
@@ -595,6 +734,8 @@ def main():
                     help='the map has stock interior minimap cells (default 1)')
     ap.add_argument('--has-groups', type=int, default=1,
                     help='interior-art.json exists and has groups (default 1)')
+    ap.add_argument('--has-3d', type=int, default=0,
+                    help='interior-3d.json exists and has 3D section sprites (default 0)')
     args = ap.parse_args()
 
     fit = 'null'
@@ -618,6 +759,7 @@ def main():
                 .replace('@HAS_EXT@', '1' if args.has_ext else '0')
                 .replace('@HAS_INT@', '1' if args.has_int else '0')
                 .replace('@HAS_GROUPS@', '1' if args.has_groups else '0')
+                .replace('@HAS_3D@', '1' if args.has_3d else '0')
                 .replace('@PX@', str(args.px)))
     out = args.out
     path = os.path.join(out, 'viewer.html')

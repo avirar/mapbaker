@@ -45,6 +45,7 @@ namespace MapBakerApp {
         uint32_t quadSel;        // bulk selection: 0 none, 1 all, 2 exterior (default), 3 interior
         const char* quadDump;    // optional: write the collected group table to this file
         bool dumpInteriorArt;    // write per-group stock interior art JSON + PNG cells, then exit
+        bool dumpInterior3d;     // write per-cell 3D section sprites (full + masked), then exit
         bool forceWmo;           // force-load all WMO groups (instances with ADT terrain)
         bool skipExisting;       // skip tiles whose PNG already exists (resume / parallel workers)
         const char* tileListFile; // optional text file of "tx ty" lines (parallel worker assignment)

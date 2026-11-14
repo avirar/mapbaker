@@ -3546,12 +3546,20 @@ void CWorldScene::RenderMapObjDefGroups() {
             // (bDungeon); their groups are already the interior, so keep all of them.
             const bool interiorFilter = MapBakerInteriorOnly && !CMap::bDungeon;
             bool skipExterior = false;
+            if (MapBakerOnlyGroupOn) {
+                const char* wmo = mapObjDef->m_owner ? mapObjDef->m_owner->m_wmoName : "";
+                skipExterior = !mapObjDef->m_owner ||
+                        SStrCmpI(wmo, MapBakerOnlyGroupWmo, sizeof(MapBakerOnlyGroupWmo)) != 0 ||
+                        static_cast<int32_t>(group->m_groupNum) != MapBakerOnlyGroupNum ||
+                        fabsf(mapObjDef->m_mat.d0 - MapBakerOnlyGroupMtx) > 0.5f ||
+                        fabsf(mapObjDef->m_mat.d1 - MapBakerOnlyGroupMty) > 0.5f;
+            }
             if (interiorFilter) {
                 const CMapObjGroup* smoGroup = mapObjDef->m_owner
                         ? mapObjDef->m_owner->GetGroup(static_cast<int32_t>(group->m_groupNum), 0)
                         : nullptr;
                 const bool exterior = smoGroup && (smoGroup->m_flags & 0x8);
-                skipExterior = !mapObjDef->m_owner || exterior ||
+                skipExterior = skipExterior || !mapObjDef->m_owner || exterior ||
                         !MapBakerArtHasGroup(mapObjDef->m_owner->m_wmoName,
                                              static_cast<int32_t>(group->m_groupNum));
             }

@@ -114,8 +114,18 @@ namespace MapBakerWorld {
 
     // Layer output for the interactive layer viewer.
     // layer: 0 = combined RGB (same as RenderTile), 1 = terrain RGB, 2 = WMO RGBA,
-    // 3 = trees RGBA, 4 = quads RGBA. rgba must match the layer's channel count.
+    // 3 = trees RGBA, 4 = quads RGBA, 5 = opaque scene RGB, 6 = interiors RGBA,
+    // 7 = stock outdoor minimap RGBA. rgba must match the layer's channel count.
     bool RenderTileLayer(int32_t tx, int32_t ty, int32_t sizePx, uint8_t* out, bool rgba, int32_t layer);
+
+    // Render one WMO instance+group top-down into a transparent square, for the per-cell
+    // 3D interior remaster. (x0..x1, y0..y1) is the world-space square the camera covers.
+    // sectionZ clips everything above that world height (the corridor ceiling), revealing
+    // the floor/walls. Output is RGBA, row 0 = north.
+    bool RenderGroupCellSprite(const char* wmoName, int32_t groupNum,
+                               float mtx, float mty,
+                               float x0, float x1, float y0, float y1,
+                               float sectionZ, int32_t sizePx, uint8_t* outRgba);
 
     // Read-back self test: clears the render target to a known color and verifies the readback.
     bool SelfTestReadback();

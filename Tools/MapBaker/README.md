@@ -151,6 +151,7 @@ terrain+WMO and the 2D art overlay**. Disable with `--no-quad-fill`.
 | `--layer quads-ext` | stock outdoor minimap layer: one client `map<tx>_<ty>.blp` per ADT (RGBA) |
 | `--layer quads-int` | stock WMO interior art cells (same as `--layer quads --quad-sel int`) |
 | `--dump-interior-art` | write `<out>/interior-art.json` + per-cell PNGs for the per-group tunnel x-ray viewer, then exit |
+| `--dump-interior-3d` | write `<out>/interior-3d.json` + full/masked 3D section sprites for every stock interior cell, then exit |
 | `--quads` | enable the 2D WMO-art overlay (collect groups + composite) |
 | `--quad-cache <file>` | binary group-table cache (`MBQUAD02` v2): loads instantly if present, else collects once and saves |
 | `--quad-dump <file>` | dump the collected group table (names, flags, bbox, local bbox, matrix, MOGI flags, batch layout) |
@@ -219,9 +220,26 @@ python Tools/MapBaker/bake_interiors_openworld.py --manifest <manifest.json> \
 python Tools/MapBaker/dump_interior_art.py --manifest <manifest.json> --root <delivery> \
     --client <client> --exe bin/Win/MapBaker64.exe --workers 4
 
+# per-cell 3D section sprites for the corridor remaster (Stratholme first)
+python Tools/MapBaker/dump_interior_3d.py --manifest <manifest.json> --root <delivery> \
+    --client <client> --exe bin/Win/MapBaker64.exe --only 329
+
 # unified four-layer viewers + /remaster/ gallery
 python Tools/MapBaker/make_final_viewers.py
 ```
+
+### Per-cell 3D corridor remaster
+
+`--dump-interior-3d` renders each stock interior-art cell’s owning WMO group from
+above in world space. The ortho near plane is placed at `group world Z minimum + 2`,
+which clips the corridor ceiling and reveals the floor/walls. Each cell gets:
+
+- `<id>_<x>_<y>_full.png` — full 3D floor/wall footprint
+- `<id>_<x>_<y>_masked.png` — the same render multiplied by the stock cell alpha
+
+The viewer’s per-group `3D` checkbox draws the selected variant (Full / Masked) at the
+cell’s stored world AABB. This is what replaces the pink Stratholme `hall32`, `hall33`,
+`library02` and `instancehall03` corridor art with actual 3D corridor geometry.
 
 `stitch.py` intentionally no longer writes `viewer.html` unless `--viewer` is passed;
 otherwise a layer stitch would overwrite the unified viewer. The final index is written

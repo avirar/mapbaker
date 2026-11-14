@@ -72,6 +72,11 @@ uint8_t MapBakerQuadFill = 1;
 uint8_t MapBakerFlatWaterLight = 0;
 uint8_t MapBakerInteriorOnly = 0;
 uint8_t MapBakerForcePortals = 0;
+uint8_t MapBakerOnlyGroupOn = 0;
+char MapBakerOnlyGroupWmo[256] = {};
+int32_t MapBakerOnlyGroupNum = -1;
+float MapBakerOnlyGroupMtx = 0.0f;
+float MapBakerOnlyGroupMty = 0.0f;
 int32_t MapBakerWaitTextures = 0;
 int32_t MapBakerM2Filter = 0;
 
@@ -1920,6 +1925,115 @@ namespace MapBakerWorld {
             return false;
         }
 
+        return true;
+    }
+
+    bool RenderGroupCellSprite(const char* wmoName, int32_t groupNum,
+                               float mtx, float mty,
+                               float x0, float x1, float y0, float y1,
+                               float sectionZ, int32_t sizePx, uint8_t* outRgba) {
+        if (!s_rt || !outRgba || sizePx <= 0 || !wmoName) {
+            return false;
+        }
+        const float cx = (x0 + x1) * 0.5f;
+        const float cy = (y0 + y1) * 0.5f;
+        float half = std::max(x1 - x0, y1 - y0) * 0.5f * 1.05f;
+        if (half <= 0.0f) {
+            return false;
+        }
+        const float camZ = sectionZ + 1000.0f;
+        C3Vector camPos(cx, cy, camZ);
+        C3Vector camTarget(cx, cy, camZ - 1.0f);
+
+        // Same top-down camera convention as RenderTileInternal.
+        C3Vector origin(0.0f, 0.0f, 0.0f);
+        C3Vector forward = camTarget - camPos;
+        C44Matrix view;
+        GxuXformCreateLookAtSgCompat(origin, forward, C3Vector(1.0f, 0.0f, 0.0f), view);
+        GxXformSetView(view);
+
+        C44Matrix projection;
+        GxuXformCreateOrtho(-half, half, -half, half, 1000.0f, 4000.0f, projection);
+        GxXformSetProjection(projection);
+
+        // The view is rotation-only; UpdateWorld carries the camera position. The ADT
+        // indices are only used to stream the area around the group.
+        const float kAdtSize = 533.33331f;
+        const float kWorldOrigin = 17066.666f;
+        int32_t tx = static_cast<int32_t>(floorf((kWorldOrigin - cy) / kAdtSize));
+        int32_t ty = static_cast<int32_t>(floorf((kWorldOrigin - cx) / kAdtSize));
+        if (tx < 0) tx = 0;
+        if (ty < 0) ty = 0;
+        if (tx > 63) tx = 63;
+        if (ty > 63) ty = 63;
+        UpdateWorld(camPos, camTarget, tx, ty);
+
+        CGxTex* oldTarget = nullptr;
+        g_theGxDevicePtr->DeviceGetRenderTarget(GxBuffers_Color, oldTarget);
+        g_theGxDevicePtr->DeviceSetRenderTarget(GxBuffers_Color, s_rt, 0);
+        GxXformSetViewport(0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f);
+        CShaderEffect::UpdateProjMatrix();
+
+        CImVector clear;
+        clear.b = 0;
+        clear.g = 0;
+        clear.r = 0;
+        clear.a = 0;
+        g_theGxDevicePtr->SceneClear(3, clear);
+
+        const uint8_t savedOn = MapBakerOnlyGroupOn;
+        char savedWmo[256];
+        memcpy(savedWmo, MapBakerOnlyGroupWmo, sizeof(savedWmo));
+        const int32_t savedNum = MapBakerOnlyGroupNum;
+        const float savedMtx = MapBakerOnlyGroupMtx;
+        const float savedMty = MapBakerOnlyGroupMty;
+        const uint8_t savedFill = MapBakerQuadFill;
+        const uint8_t savedSuppress = s_quadWmoSuppress;
+        const uint8_t savedNoWmo = s_noWmo;
+        const uint8_t savedInterior = MapBakerInteriorOnly;
+
+        MapBakerOnlyGroupOn = 1;
+        SStrCopy(MapBakerOnlyGroupWmo, wmoName, sizeof(MapBakerOnlyGroupWmo));
+        MapBakerOnlyGroupNum = groupNum;
+        MapBakerOnlyGroupMtx = mtx;
+        MapBakerOnlyGroupMty = mty;
+        MapBakerQuadFill = 1;
+        s_quadWmoSuppress = 0;
+        s_noWmo = 0;
+        MapBakerInteriorOnly = 0;
+
+        g_theGxDevicePtr->RsPush();
+        PrepareScene();
+        CWorldScene::RenderMapObjDefGroups();
+        g_theGxDevicePtr->RsPop();
+
+        MapBakerOnlyGroupOn = savedOn;
+        memcpy(MapBakerOnlyGroupWmo, savedWmo, sizeof(savedWmo));
+        MapBakerOnlyGroupNum = savedNum;
+        MapBakerOnlyGroupMtx = savedMtx;
+        MapBakerOnlyGroupMty = savedMty;
+        MapBakerQuadFill = savedFill;
+        s_quadWmoSuppress = savedSuppress;
+        s_noWmo = savedNoWmo;
+        MapBakerInteriorOnly = savedInterior;
+
+        g_theGxDevicePtr->DeviceSetRenderTarget(GxBuffers_Color, oldTarget, 0);
+
+        std::vector<uint8_t> full(static_cast<size_t>(s_rtSize) * s_rtSize * 4);
+        if (!ReadRtToRgba(full.data(), s_rtSize)) {
+            return false;
+        }
+        if (s_gain != 1.0f) {
+            const size_t count = static_cast<size_t>(s_rtSize) * s_rtSize;
+            for (size_t p = 0; p < count; p++) {
+                uint8_t* q = full.data() + p * 4;
+                q[0] = static_cast<uint8_t>(std::min(255.0f, q[0] * s_gain));
+                q[1] = static_cast<uint8_t>(std::min(255.0f, q[1] * s_gain));
+                q[2] = static_cast<uint8_t>(std::min(255.0f, q[2] * s_gain));
+            }
+        }
+        BoxDownsampleRgba(full.data(), static_cast<int32_t>(s_rtSize),
+                          static_cast<int32_t>(s_rtSize), outRgba, sizePx, sizePx);
         return true;
     }
 

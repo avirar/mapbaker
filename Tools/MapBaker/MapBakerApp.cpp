@@ -6,6 +6,8 @@
 #include "MapBakerQuad.h"
 #include "MapBakerServe.h"
 #include "MapBakerWorld.h"
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -267,6 +269,215 @@ namespace {
         fclose(json);
         fprintf(stderr, "MapBaker: interior art dump: %u groups, %u cells -> %s (map %d)\n",
                 groupCount, cellCount, jsonPath, mapId);
+        return true;
+    }
+
+    struct DumpCell3d {
+        MapBakerArtCell m_cell;
+        float m_x0, m_x1, m_y0, m_y1;   // square world AABB covered by the sprite
+        float m_sectionZ;
+        char m_full[64];
+        char m_masked[64];
+    };
+
+    bool DumpInterior3d(const char* outDir, int32_t mapId) {
+        if (!outDir) {
+            return false;
+        }
+        const int32_t spritePx = s_config.px;
+        char artDir[520];
+        snprintf(artDir, sizeof(artDir), "%s\\interior-3d", outDir);
+        CreateDirectoryA(artDir, nullptr);
+        char jsonPath[520];
+        snprintf(jsonPath, sizeof(jsonPath), "%s\\interior-3d.json", outDir);
+        FILE* json = fopen(jsonPath, "w");
+        if (!json) {
+            fprintf(stderr, "MapBaker: could not write %s\n", jsonPath);
+            return false;
+        }
+        fprintf(json, "[\n");
+        bool firstGroup = true;
+        uint32_t groupCount = 0;
+        uint32_t cellCount = 0;
+        uint32_t emptyCount = 0;
+
+        for (uint32_t i = 0; i < MapBakerQuadCount; i++) {
+            const MapBakerQuadEntry& e = MapBakerQuadTable[i];
+            if (e.m_smoFlags & 0x8) {
+                continue;
+            }
+            if (!MapBakerArtHasGroup(e.m_wmoName, e.m_groupNum)) {
+                continue;
+            }
+            MapBakerArtCell cells[256];
+            const uint32_t n = MapBakerArtCellGrid(e.m_lx0, e.m_lx1, e.m_ly0, e.m_ly1,
+                                                   cells, 256);
+            std::vector<DumpCell3d> valid;
+            for (uint32_t c = 0; c < n; c++) {
+                const MapBakerArtCell& cell = cells[c];
+                const MapBakerArtImage* stock =
+                        MapBakerArtGet(e.m_wmoName, e.m_groupNum, cell.m_x, cell.m_y);
+                if (!stock || !stock->m_px || stock->m_w <= 0 || stock->m_h <= 0) {
+                    continue;
+                }
+
+                // Cell local corners -> world, then a square AABB around the cell.
+                const float lx[4] = { cell.m_x0, cell.m_x1, cell.m_x0, cell.m_x1 };
+                const float ly[4] = { cell.m_y0, cell.m_y0, cell.m_y1, cell.m_y1 };
+                float wx0 = 1.0e30f, wx1 = -1.0e30f, wy0 = 1.0e30f, wy1 = -1.0e30f;
+                for (int32_t k = 0; k < 4; k++) {
+                    const float wx = e.m_ma * lx[k] + e.m_mb * ly[k] + e.m_mtx;
+                    const float wy = e.m_mc * lx[k] + e.m_md * ly[k] + e.m_mty;
+                    if (wx < wx0) wx0 = wx;
+                    if (wx > wx1) wx1 = wx;
+                    if (wy < wy0) wy0 = wy;
+                    if (wy > wy1) wy1 = wy;
+                }
+                const float cx = (wx0 + wx1) * 0.5f;
+                const float cy = (wy0 + wy1) * 0.5f;
+                const float half = std::max(wx1 - wx0, wy1 - wy0) * 0.5f * 1.05f;
+                const float sx0 = cx - half;
+                const float sx1 = cx + half;
+                const float sy0 = cy - half;
+                const float sy1 = cy + half;
+                const float sectionZ = e.m_z0 + 2.0f;
+
+                std::vector<uint8_t> rgba(static_cast<size_t>(spritePx) * spritePx * 4);
+                if (!MapBakerWorld::RenderGroupCellSprite(
+                            e.m_wmoName, e.m_groupNum, e.m_mtx, e.m_mty,
+                            sx0, sx1, sy0, sy1, sectionZ, spritePx, rgba.data())) {
+                    fprintf(stderr, "MapBaker 3d: render failed grp %d cell %d,%d\n",
+                            e.m_groupNum, cell.m_x, cell.m_y);
+                    continue;
+                }
+                uint32_t covered = 0;
+                for (int32_t p = 0; p < spritePx * spritePx; p++) {
+                    if (rgba[static_cast<size_t>(p) * 4 + 3] > 1) {
+                        covered++;
+                    }
+                }
+                if (!covered) {
+                    emptyCount++;
+                    continue;
+                }
+
+                DumpCell3d dc;
+                dc.m_cell = cell;
+                dc.m_x0 = sx0;
+                dc.m_x1 = sx1;
+                dc.m_y0 = sy0;
+                dc.m_y1 = sy1;
+                dc.m_sectionZ = sectionZ;
+                snprintf(dc.m_full, sizeof(dc.m_full), "a%u_%02d_%02d_full.png",
+                         i, cell.m_x, cell.m_y);
+                snprintf(dc.m_masked, sizeof(dc.m_masked), "a%u_%02d_%02d_masked.png",
+                         i, cell.m_x, cell.m_y);
+                char fullPath[520];
+                char maskedPath[520];
+                snprintf(fullPath, sizeof(fullPath), "%s\\%s", artDir, dc.m_full);
+                snprintf(maskedPath, sizeof(maskedPath), "%s\\%s", artDir, dc.m_masked);
+                if (!MapBakerPng::WriteRgba(fullPath, spritePx, spritePx, rgba.data())) {
+                    fprintf(stderr, "MapBaker 3d: could not write %s\n", fullPath);
+                    continue;
+                }
+
+                // Masked variant: sample the stock cell alpha in cell-local space.
+                std::vector<uint8_t> masked = rgba;
+                const float ma = e.m_ma, mb = e.m_mb, mc = e.m_mc, md = e.m_md;
+                const float det = ma * md - mb * mc;
+                if (fabsf(det) > 1.0e-12f) {
+                    const float invDet = 1.0f / det;
+                    const float cw = cell.m_x1 - cell.m_x0;
+                    const float ch = cell.m_y1 - cell.m_y0;
+                    for (int32_t py = 0; py < spritePx; py++) {
+                        // image row 0 = north (max world X); col 0 = west (max world Y)
+                        const float wx = sx1 - (static_cast<float>(py) + 0.5f) /
+                                static_cast<float>(spritePx) * (sx1 - sx0);
+                        for (int32_t px = 0; px < spritePx; px++) {
+                            const float wy = sy1 - (static_cast<float>(px) + 0.5f) /
+                                    static_cast<float>(spritePx) * (sy1 - sy0);
+                            const float dx = wx - e.m_mtx;
+                            const float dy = wy - e.m_mty;
+                            const float lx = (md * dx - mb * dy) * invDet;
+                            const float ly = (-mc * dx + ma * dy) * invDet;
+                            uint8_t mask = 0;
+                            if (lx >= cell.m_x0 && lx <= cell.m_x1 &&
+                                    ly >= cell.m_y0 && ly <= cell.m_y1 && cw > 0.0f && ch > 0.0f) {
+                                const float u = (lx - cell.m_x0) / cw;
+                                const float v = 1.0f - (ly - cell.m_y0) / ch;
+                                float uC = u * static_cast<float>(stock->m_w - 1);
+                                float vC = v * static_cast<float>(stock->m_h - 1);
+                                if (uC < 0.0f) uC = 0.0f;
+                                if (vC < 0.0f) vC = 0.0f;
+                                if (uC > stock->m_w - 1) uC = static_cast<float>(stock->m_w - 1);
+                                if (vC > stock->m_h - 1) vC = static_cast<float>(stock->m_h - 1);
+                                const int32_t u0 = static_cast<int32_t>(uC);
+                                const int32_t v0 = static_cast<int32_t>(vC);
+                                const int32_t u1 = (u0 + 1 < stock->m_w) ? u0 + 1 : u0;
+                                const int32_t v1 = (v0 + 1 < stock->m_h) ? v0 + 1 : v0;
+                                const float fu = uC - static_cast<float>(u0);
+                                const float fv = vC - static_cast<float>(v0);
+                                const size_t stride = static_cast<size_t>(stock->m_w) * 4;
+                                const uint8_t* a00 = stock->m_px + static_cast<size_t>(v0) * stride + static_cast<size_t>(u0) * 4;
+                                const uint8_t* a10 = stock->m_px + static_cast<size_t>(v0) * stride + static_cast<size_t>(u1) * 4;
+                                const uint8_t* a01 = stock->m_px + static_cast<size_t>(v1) * stride + static_cast<size_t>(u0) * 4;
+                                const uint8_t* a11 = stock->m_px + static_cast<size_t>(v1) * stride + static_cast<size_t>(u1) * 4;
+                                const float a0 = a00[3] * (1.0f - fu) + a10[3] * fu;
+                                const float a1 = a01[3] * (1.0f - fu) + a11[3] * fu;
+                                mask = static_cast<uint8_t>(a0 * (1.0f - fv) + a1 * fv + 0.5f);
+                            }
+                            uint8_t* p = masked.data() +
+                                    (static_cast<size_t>(py) * spritePx + px) * 4;
+                            p[3] = static_cast<uint8_t>(
+                                    (static_cast<uint32_t>(p[3]) * mask + 127u) / 255u);
+                        }
+                    }
+                }
+                if (!MapBakerPng::WriteRgba(maskedPath, spritePx, spritePx, masked.data())) {
+                    fprintf(stderr, "MapBaker 3d: could not write %s\n", maskedPath);
+                    continue;
+                }
+                valid.push_back(dc);
+            }
+            if (valid.empty()) {
+                continue;
+            }
+
+            if (!firstGroup) {
+                fprintf(json, ",\n");
+            }
+            firstGroup = false;
+            fprintf(json, "{\"id\":%u,\"wmo\":\"", i);
+            JsonEscape(json, e.m_wmoName);
+            fprintf(json, "\",\"grp\":%d,\"smo\":\"", e.m_groupNum);
+            JsonEscape(json, e.m_smoName);
+            fprintf(json, "\",\"cells\":[");
+            for (size_t c = 0; c < valid.size(); c++) {
+                const DumpCell3d& dc = valid[c];
+                if (c) {
+                    fputc(',', json);
+                }
+                fprintf(json,
+                        "{\"x\":%d,\"y\":%d,\"world\":[%.3f,%.3f,%.3f,%.3f],"
+                        "\"section_z\":%.3f,\"px\":%d,\"full\":\"interior-3d/%s\","
+                        "\"masked\":\"interior-3d/%s\"}",
+                        dc.m_cell.m_x, dc.m_cell.m_y,
+                        (double)dc.m_x0, (double)dc.m_x1, (double)dc.m_y0, (double)dc.m_y1,
+                        (double)dc.m_sectionZ, spritePx, dc.m_full, dc.m_masked);
+            }
+            fprintf(json, "]}");
+            groupCount++;
+            cellCount += static_cast<uint32_t>(valid.size());
+            if ((groupCount % 10) == 0) {
+                fprintf(stderr, "MapBaker 3d: %u groups, %u cells, %u empty\n",
+                        groupCount, cellCount, emptyCount);
+            }
+        }
+        fprintf(json, "\n]\n");
+        fclose(json);
+        fprintf(stderr,
+                "MapBaker: interior 3D dump: %u groups, %u cells, %u empty -> %s (map %d)\n",
+                groupCount, cellCount, emptyCount, jsonPath, mapId);
         return true;
     }
 
@@ -653,6 +864,11 @@ namespace {
         }
         if (s_config.dumpInteriorArt) {
             DumpInteriorArt(s_config.outDir, s_mapIdNum);
+            EventPostClose();
+            return 1;
+        }
+        if (s_config.dumpInterior3d) {
+            DumpInterior3d(s_config.outDir, s_mapIdNum);
             EventPostClose();
             return 1;
         }

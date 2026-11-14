@@ -216,6 +216,8 @@ static void Usage() {
     printf("  --quad-dump <file>  write the collected group table (i/wmo/grp/smo/ext/sel/bbox)\n");
     printf("  --dump-interior-art  write <out>/interior-art.json + per-cell PNGs for the\n");
     printf("                      stock interior groups, then exit (for the per-group viewer)\n");
+    printf("  --dump-interior-3d   write <out>/interior-3d.json + full/masked 3D section\n");
+    printf("                      sprites for every stock interior cell, then exit\n");
     printf("  --skip-existing     skip tiles whose PNG already exists (resume / parallel workers)\n");
     printf("  --tile-list <file>  render only the \"tx ty\" lines in this file (parallel workers)\n");
     printf("  --quad-cache <file> cache the collected WMO group table (loads instantly when it\n");
@@ -264,6 +266,7 @@ int main(int argc, char** argv) {
     config.quadWmo = true;  // 3D WMO underneath the art (the comprehensive map look)
     config.quadDump = nullptr;
     config.dumpInteriorArt = false;
+    config.dumpInterior3d = false;
     config.skipExisting = false;
     config.tileListFile = nullptr;
     config.quadCache = nullptr;
@@ -438,6 +441,10 @@ int main(int argc, char** argv) {
         } else if (!strcmp(argv[i], "--dump-interior-art")) {
             config.dumpInteriorArt = true;
             config.quads = true;
+        } else if (!strcmp(argv[i], "--dump-interior-3d")) {
+            config.dumpInterior3d = true;
+            config.quads = true;
+            config.forceWmo = true;
         } else if (!strcmp(argv[i], "--quad-sel") && i + 1 < argc) {
             const char* sel = argv[++i];
             if (!strcmp(sel, "none")) config.quadSel = 0;

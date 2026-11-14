@@ -67,6 +67,13 @@ def main():
                 has_groups = 1 if len(json.load(open(jpath))) > 0 else 0
         except Exception:
             has_groups = 0
+        has_3d = 0
+        try:
+            jpath3 = os.path.join(out, 'interior-3d.json')
+            if os.path.exists(jpath3):
+                has_3d = 1 if len(json.load(open(jpath3))) > 0 else 0
+        except Exception:
+            has_3d = 0
 
         fit = ''
         if mid not in CONTINENTS:
@@ -108,7 +115,7 @@ def main():
                '--tx0', str(tx0), '--ty0', str(ty0), '--count', str(count),
                '--px', str(px), '--title', title,
                '--has-ext', str(has_ext), '--has-int', str(has_int),
-               '--has-groups', str(has_groups)]
+               '--has-groups', str(has_groups), '--has-3d', str(has_3d)]
         if fit:
             cmd += ['--fit', fit]
         p = subprocess.run(cmd, capture_output=True, text=True)

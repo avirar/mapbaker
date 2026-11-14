@@ -83,6 +83,14 @@ extern int32_t MapBakerM2Filter;
 extern uint8_t MapBakerFlatWaterLight;
 extern uint8_t MapBakerInteriorOnly;
 extern uint8_t MapBakerForcePortals;
+
+// Per-cell 3D sprite bake: render only one WMO instance+group. The quad cache stores
+// pointers from a previous process, so match by path + group + instance translation.
+extern uint8_t MapBakerOnlyGroupOn;
+extern char MapBakerOnlyGroupWmo[256];
+extern int32_t MapBakerOnlyGroupNum;
+extern float MapBakerOnlyGroupMtx;
+extern float MapBakerOnlyGroupMty;
 bool MapBakerM2IsTree(const char* fileName);
 bool MapBakerM2IsEffect(const char* fileName);
 void MapBakerRenderAllPortals();
